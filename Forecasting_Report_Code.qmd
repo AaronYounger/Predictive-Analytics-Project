@@ -1,0 +1,1083 @@
+---
+title: "Forecast Report"
+author: "Aaron Younger"
+date: "December 10, 2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+  error: false
+toc: true
+editor: source
+---
+
+# Business Understanding
+
+## Business Problem
+The data used in this analysis comes from the Federal Reserve Bank of St. Louis. The primary goal of this analysis is to build forecasting models to predict retail sales data. These models can be useful for retail stakeholders in anticipating future demand instead of reacting to it. These models can also help retail stakeholders with better financial planning and budgeting. 
+
+Based off this information, the **Business Problem** is to build a forecast model capable of accurately projecting six months into the future for retail stakeholders.\
+
+## Two Research Questions
+Along with the business problem, this report explores two research questions:\
+
+1.How accurately can different forecasting methods predict future sales?\
+
+2.Does including pre-break data harm or improve forecasting accuracy?\
+
+Now that the business problem and research questions have been clearly defined, the next step in this report is exploring the data. This **Data Understanding** phase provides the foundational insight needed for effective data preparation for modeling.\
+
+
+# Data Understanding
+
+```{r}
+options(scipen = 9999)
+suppressWarnings(RNGversion("3.5.3"))
+
+```
+
+```{r}
+library(readxl)
+library(DataExplorer)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(forecast)
+library(strucchange)
+
+```
+
+## Import Dataset
+
+```{r}
+Retail_Data <- read_excel("Monthly_Retail_Data.xlsx", sheet = "Monthly")
+
+
+```
+### Rename RETAILMNSA to Sales
+
+```{r}
+Retail_Data <- Retail_Data %>% 
+  rename(Sales = RETAILSMNSA)
+head(Retail_Data)
+
+```
+Renamed RETAILMNSA to a clearer column name, Sales. 
+
+
+### Variables and Range of Dates
+
+```{r}
+start_date <- Retail_Data %>% 
+  slice(1) %>% 
+  pull(observation_date)
+
+end_date <- Retail_Data %>% 
+  slice(n()) %>% 
+  pull(observation_date)
+
+# Build table with variable names + dates
+table_summary <- tibble(
+  variable_name = names(Retail_Data),
+  start_date = start_date,
+  end_date = end_date
+)
+
+table_summary
+
+
+
+```
+This table shows the variables in the dataset, observation_date and sales, while also showing the start and end date of the time-series dataset. The start date is 1992-01-01 and the end date is 2025-06-01. This means the time-series dataset spans 33 years and 5 months. 
+
+## Create Forecast Data
+```{r}
+Retail_Data <- Retail_Data %>% 
+  arrange(observation_date)
+
+start_year <- year(min(Retail_Data$observation_date))
+start_month <- month(min(Retail_Data$observation_date))
+
+forecast_data <- ts(data = Retail_Data$Sales,
+                    start = c(start_year, start_month),
+                    frequency = 12)
+
+```
+The dataset is first arranged in ascending order by the observation_date variable to ensure the time series is properly ordered. Next, the code extracts the year and month of the earliest observation in the dataset, which will serve as the starting point of the time series object. Finally, a monthly (frequency = 12) time series object named forecast_data is created using the Sales variable. This converts the raw retail sales data into a structured time series format that can be used for forecasting models.
+
+### Time-Series Plot
+
+```{r}
+plot.ts(forecast_data)
+
+```
+Comments on Time-Series plot:\
+From the initial view of the plot it looks like there is both trend and seasonality. However, this will be explored further in the modeling phase.  
+
+## Trend Investigation
+
+```{r}
+ggplot(data = Retail_Data, aes(x = observation_date, y = Sales)) +
+  geom_point(color = "blue")+
+  geom_smooth(method = lm, color = "red", se = FALSE) +
+  labs(
+    title = "Scatterplot Showing Potential Trend",
+    x = "Observation-Date",
+    y = "Sales"
+  ) +
+  theme_minimal()
+
+
+
+```
+Comments on Scatterplot exploring trend:\
+Looking at a scatterplot of the sales by observation date there is a clear trend. As observation date goes up so do sales. So this time-series plot has trend.\
+
+## Seasonality Investigation
+
+```{r}
+## Creation of Month Variable
+Retail_Data$month <- month(Retail_Data$observation_date, label = TRUE, abbr = TRUE)
+
+## Average Sales by month variable
+Retail_Data %>% 
+  group_by(month) %>% 
+  summarise(avg_sales = mean(Sales)) %>% 
+  ggplot(aes(x = month, y = avg_sales)) +
+  geom_col(fill = "blue") +
+  geom_text(aes(label = round(avg_sales, 0)),
+            vjust = -0.5,
+            size = 3) +
+  labs(
+    title = "Sales by Month",
+    x = "Month",
+    y="Sales"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+```{r}
+ggseasonplot(forecast_data)
+
+```
+Comments on Seasonality investigation plots:\
+To determine whether the time series exhibited seasonality, I evaluated two key aspects.
+First, I examined whether certain months consistently showed higher or lower sales than others. This pattern is clearly visible in the monthly column chart, where December repeatedly shows the highest sales, while January–February tend to be the lowest, and March–May consistently rise above winter months. These predictable differences across months indicate a recurring seasonal pattern.\
+
+Second, I assessed whether these monthly patterns were consistent across multiple years, which is a defining feature of seasonality. The seasonal line plot confirms this: each year follows a similar shape, with sales increasing in spring, softening in late summer, and rising sharply again in December. The fact that the lines maintain nearly the same month-to-month pattern year after year demonstrates strong and stable seasonality in the data.\
+
+Overall, both plots show that the time-series data has seasonality.\
+
+## Test for Structure Breaks
+
+### Bai-Perron Test
+
+#### BIC and RSS Plot
+
+```{r}
+sb <- strucchange::breakpoints(forecast_data ~ 1)
+plot(sb) ## Figure out what this graph reads
+
+```
+The BIC and RSS plot evaluates how model fit improves as additional structural breakpoints are added. Both the Bayesian Information Criterion (BIC) and Residual Sum of Squares (RSS) decrease as the number of breakpoints increases, indicating that models with more breaks better capture shifts in the underlying data-generating process. The BIC curve reaches its lowest point at five breakpoints, suggesting this is the optimal model complexity before overfitting becomes a concern.\
+
+
+#### Breakpoint Confidence Intervals
+
+```{r}
+strucchange::breakdates(sb)
+confint(sb)
+```
+The breakpoint summary reports the estimated locations of structural changes in the sales series along with 95% confidence intervals for each break. The detected breakpoints occur around late 1998, late 2004, early 2010, mid-2015, and mid-2020. These results indicate five major periods where the statistical properties of the retail sales time series shifted significantly. The narrow confidence intervals reflect strong evidence supporting these structural changes.\
+
+
+#### Time Series Plot with Structural Breaks
+
+```{r}
+plot(forecast_data, main = "Sales with Detected Structure Breaks")
+lines(sb, col = "red", lwd = 2)
+
+```
+The time-series plot overlays the fitted structural breakpoints on the retail sales series. The vertical red dashed lines mark the locations where significant changes in trend or growth rate occur. These breaks visually align with periods of noticeable shifts in the sales pattern, such as changes in overall growth slope or volatility. The plot confirms that retail sales do not follow a single continuous trend but evolve through distinct regimes over time.\
+
+Structural breaks will not be a concern for the regression forecasting model in data preparation but will need to be addressed for the Holt-Winters model.\
+
+# Data Preperation
+
+## Regression
+
+## Create Financial Global Crisis dummy variable
+
+```{r}
+crisis_start <- c(2009, 1)
+crisis_end <- c(2020,3)
+
+crisis_dummy <- ifelse(
+  time(forecast_data) >= crisis_start[1] + (crisis_start[2] - 1) / 12 & 
+    time(forecast_data) <= crisis_end[1] + (crisis_end[2] - 1) / 12 ,
+  1,0)
+
+crisis_dummy <- ts(crisis_dummy,
+                   start = start(forecast_data),
+                   frequency = frequency(forecast_data))
+
+
+```
+A dummy variable was created to capture the impact of the economic crisis period on retail sales. The crisis window was defined from January 2009 to March 2020. For every month within this range, the dummy variable takes the value 1, and 0 otherwise. The dummy was then converted into a time-series object aligned with the same start date and monthly frequency as the retail sales data, ensuring compatibility with the regression model.\
+
+
+
+## Create Covid Dummy Variable
+
+```{r}
+covid_start <- c(2020, 4)
+
+# Create the dummy on the same time index as forecast_data
+covid_dummy <- ifelse(
+  time(forecast_data) >= covid_start[1] + (covid_start[2] - 1) /12, 1, 0)
+  
+
+covid_dummy <- ts(covid_dummy,
+                  start = start(forecast_data),
+                  frequency = frequency(forecast_data))
+
+
+```
+A second dummy variable was constructed to account for the structural effects of the COVID-19 pandemic. The COVID period was defined as beginning in April 2020 and continuing through the end of the sample. All observations from April 2020 onward are assigned a value of 1, while earlier periods are assigned 0. This dummy variable was also converted into a monthly time-series format consistent with the main dataset to allow inclusion in the regression forecasting model.\
+
+
+## Partition Forecast Data and Dummy Variables
+
+```{r}
+
+trainset <- window(forecast_data, start= c(1992, 1), end =c(2024, 5))
+testset <- window(forecast_data, start = c(2024, 6), end =c(2025,6))
+
+crisis_train <- window(crisis_dummy, start=c(1992, 1), end =c(2024, 5))
+crisis_test <- window(crisis_dummy, start =c(2024,6), end =c(2025, 6))
+
+covid_train <- window(covid_dummy, start=c(1992, 1), end=c(2024,5))
+covid_test <- window(covid_dummy, start=c(2024,6), end=c(2025,6))
+
+
+```
+The dataset was divided into a training set and a test set to evaluate forecast accuracy. The training set consists of observations from January 1992 through May 2024, while the test set includes the final 12 months of data, from June 2024 through June 2025. This split allows the models to be trained on the historical pattern and then assessed on their ability to predict unseen future values. The dummy variables were also divided into corresponding training and testing periods to ensure they aligned with the sales data, allowing the model to evaluate whether these structural events have a measurable effect on forecasting accuracy.
+
+### Check Lenghts of Partitioning
+
+```{r}
+cat("\ntrainset has", length(trainset), "observation.")
+cat("\ntestset has", length(testset), "observation.")
+
+cat("\ncrisis trainset has", length(crisis_train), "observation.")
+cat("\ncrisis testset has", length(crisis_test), "observation.")
+
+cat("\ncovid trainset has", length(covid_train), "observation.")
+cat("\ncovid testset has", length(covid_test), "observation.")
+
+
+
+```
+This shows that the partitioning was done correctly as each train and test set have the same amount of observations.\
+
+
+### Visualize traind and test split
+
+```{r}
+plot_set <- bind_rows(data.frame(Time = time(trainset), sales = as.numeric(trainset), set = "Train"),
+                      data.frame(Time = time(testset), sales = as.numeric(testset), set = "Test"))
+ggplot(plot_set, aes(Time, sales, color = set)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = 2024.5, linetype = 2) +
+  labs(title = "Sales Data by Month: Train vs. Test Split",
+       x = "Time", y = "Sales") +
+  theme_minimal()
+
+
+```
+This is a visual way to see that our partitioning worked correctly. The blue part of the line represents the amount of time that will be used for the train set, the blue line spans the correct times. The red line represents the amount of time that will be used for the test set, the red line spans the correct times. 
+
+## Holt-Winters Data Preparation
+
+Since the time-series data has both trend and seasonality, the Holt-Winters exponential smoothing method is the appropriate choice, as it is specifically designed to model series with both trend and seasonality.\
+
+To test the second research question, the Holt–Winters exponential smoothing model will be trained on two datasets that differ in their time span. The first dataset will include data after the most recent structure break, this ensures the model will be trained and tested on a stable level of both trend and seasonal pattern. The second dataset will have all observation dates. This is to test and see if structural breaks affect forecast accuracy for this data. 
+
+## Create Post-Structure Break Data
+```{r}
+Retail_Data$observation_date <- as.Date(Retail_Data$observation_date)
+
+hw_data <- subset(Retail_Data, observation_date >= as.Date("2020-07-01"))
+View(hw_data)
+```
+Because the most recent structural break occurred around July 2020, only data from 2020-07-01 onward is used to train the Holt-Winters model.
+
+## Convert to Time Series object
+
+```{r}
+start_year1 <- year(min(hw_data$observation_date))
+start_month1 <- month(min(hw_data$observation_date))
+
+hw_ts <- ts(hw_data$Sales,
+            start = c(start_year1, start_month1),
+            frequency = 12)
+
+```
+
+
+# Modeling: Regression
+
+## Rolling-Origin Cross-validation
+
+```{r}
+t_results <- data.frame()  # store results
+
+## ---------- FOLD 1: train to 2021-4, validate on 2021-5 ----------
+
+# 1) Define y windows
+cv_train1_y <- window(trainset, end   = c(2021, 4))
+cv_val1_y   <- window(trainset, start = c(2021, 5), end = c(2022, 5))
+
+# 2) Define dummy windows (aligned with y)
+cv_train1_crisis <- window(crisis_train, end   = c(2021, 4))
+cv_val1_crisis   <- window(crisis_train, start = c(2021, 5), end = c(2022, 5))
+
+cv_train1_covid  <- window(covid_train,  end   = c(2021, 4))
+cv_val1_covid    <- window(covid_train,  start = c(2021, 5), end = c(2022, 5))
+
+# Put regressors into data frames for tslm/newdata
+train1_xreg <- data.frame(
+  crisis = as.numeric(cv_train1_crisis),
+  covid  = as.numeric(cv_train1_covid)
+)
+
+val1_xreg <- data.frame(
+  crisis = as.numeric(cv_val1_crisis),
+  covid  = as.numeric(cv_val1_covid)
+)
+
+
+## -------- Model 1: trend --------
+m1_trend    <- tslm(cv_train1_y ~ trend)
+f1_trend    <- forecast(m1_trend, h = length(cv_val1_y))
+a1_trend    <- accuracy(f1_trend, cv_val1_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 1,
+             Model = "trend",
+             RMSE  = a1_trend[2, "RMSE"],
+             MAPE  = a1_trend[2, "MAPE"])
+)
+
+
+## -------- Model 2: trend + season --------
+m1_ts      <- tslm(cv_train1_y ~ trend + season)
+f1_ts      <- forecast(m1_ts, h = length(cv_val1_y))
+a1_ts      <- accuracy(f1_ts, cv_val1_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 1,
+             Model = "trend + season",
+             RMSE  = a1_ts[2, "RMSE"],
+             MAPE  = a1_ts[2, "MAPE"])
+)
+
+
+## -------- Model 3: trend + season + crisis --------
+m1_tsc     <- tslm(cv_train1_y ~ trend + season + crisis,
+                   data = train1_xreg)
+f1_tsc     <- forecast(m1_tsc,
+                       h       = length(cv_val1_y),
+                       newdata = data.frame(crisis = val1_xreg$crisis))
+a1_tsc     <- accuracy(f1_tsc, cv_val1_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 1,
+             Model = "trend + season + crisis",
+             RMSE  = a1_tsc[2, "RMSE"],
+             MAPE  = a1_tsc[2, "MAPE"])
+)
+
+
+## -------- Model 4: trend + season + covid --------
+m1_tsv     <- tslm(cv_train1_y ~ trend + season + covid,
+                   data = train1_xreg)
+f1_tsv     <- forecast(m1_tsv,
+                       h       = length(cv_val1_y),
+                       newdata = data.frame(covid = val1_xreg$covid))
+a1_tsv     <- accuracy(f1_tsv, cv_val1_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 1,
+             Model = "trend + season + covid",
+             RMSE  = a1_tsv[2, "RMSE"],
+             MAPE  = a1_tsv[2, "MAPE"])
+)
+
+
+## -------- Model 5: trend + season + crisis + covid --------
+m1_tscv    <- tslm(cv_train1_y ~ trend + season + crisis + covid,
+                   data = train1_xreg)
+f1_tscv    <- forecast(m1_tscv,
+                       h       = length(cv_val1_y),
+                       newdata = val1_xreg)  # both crisis & covid
+a1_tscv    <- accuracy(f1_tscv, cv_val1_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 1,
+             Model = "trend + season + crisis + covid",
+             RMSE  = a1_tscv[2, "RMSE"],
+             MAPE  = a1_tscv[2, "MAPE"])
+)
+
+
+## ---------- FOLD 2: train to 2022-12, validate on 2023 ----------
+
+# 1) Define y windows
+cv_train2_y <- window(trainset, end   = c(2022, 5))
+cv_val2_y   <- window(trainset, start = c(2022, 6), end = c(2023, 6))
+
+# 2) Define dummy windows (aligned with y)
+cv_train2_crisis <- window(crisis_train, end   = c(2022, 5))
+cv_val2_crisis   <- window(crisis_train, start = c(2022, 6), end = c(2023, 6))
+
+cv_train2_covid  <- window(covid_train,  end   = c(2022, 5))
+cv_val2_covid    <- window(covid_train,  start = c(2022, 6), end = c(2023, 6))
+
+# 3) Build regression data frames for this fold
+train2_xreg <- data.frame(
+  crisis = as.numeric(cv_train2_crisis),
+  covid  = as.numeric(cv_train2_covid)
+)
+
+val2_xreg <- data.frame(
+  crisis = as.numeric(cv_val2_crisis),
+  covid  = as.numeric(cv_val2_covid)
+)
+
+## ---------- FOLD 2: MODELS 1–5 ----------
+
+# Model 1: trend
+m2_trend    <- tslm(cv_train2_y ~ trend)
+f2_trend    <- forecast(m2_trend, h = length(cv_val2_y))
+a2_trend    <- accuracy(f2_trend, cv_val2_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 2,
+             Model = "trend",
+             RMSE  = a2_trend[2, "RMSE"],
+             MAPE  = a2_trend[2, "MAPE"])
+)
+
+
+# Model 2: trend + season
+m2_ts      <- tslm(cv_train2_y ~ trend + season)
+f2_ts      <- forecast(m2_ts, h = length(cv_val2_y))
+a2_ts      <- accuracy(f2_ts, cv_val2_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 2,
+             Model = "trend + season",
+             RMSE  = a2_ts[2, "RMSE"],
+             MAPE  = a2_ts[2, "MAPE"])
+)
+
+
+# Model 3: trend + season + crisis
+m2_tsc     <- tslm(cv_train2_y ~ trend + season + crisis,
+                   data = train2_xreg)
+f2_tsc     <- forecast(
+  m2_tsc,
+  h       = length(cv_val2_y),
+  newdata = data.frame(crisis = val2_xreg$crisis)
+)
+a2_tsc     <- accuracy(f2_tsc, cv_val2_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 2,
+             Model = "trend + season + crisis",
+             RMSE  = a2_tsc[2, "RMSE"],
+             MAPE  = a2_tsc[2, "MAPE"])
+)
+
+
+# Model 4: trend + season + covid
+m2_tsv     <- tslm(cv_train2_y ~ trend + season + covid,
+                   data = train2_xreg)
+f2_tsv     <- forecast(
+  m2_tsv,
+  h       = length(cv_val2_y),
+  newdata = data.frame(covid = val2_xreg$covid)
+)
+a2_tsv     <- accuracy(f2_tsv, cv_val2_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 2,
+             Model = "trend + season + covid",
+             RMSE  = a2_tsv[2, "RMSE"],
+             MAPE  = a2_tsv[2, "MAPE"])
+)
+
+
+# Model 5: trend + season + crisis + covid
+m2_tscv    <- tslm(cv_train2_y ~ trend + season + crisis + covid,
+                   data = train2_xreg)
+f2_tscv    <- forecast(
+  m2_tscv,
+  h       = length(cv_val2_y),
+  newdata = val2_xreg   # has both crisis & covid
+)
+a2_tscv    <- accuracy(f2_tscv, cv_val2_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 2,
+             Model = "trend + season + crisis + covid",
+             RMSE  = a2_tscv[2, "RMSE"],
+             MAPE  = a2_tscv[2, "MAPE"])
+)
+
+## ---------- FOLD 3: train to 2023-12, validate on 2024-01 to 2024-05 ----------
+
+# 1) Define y windows
+cv_train3_y <- window(trainset, end   = c(2023, 6))
+cv_val3_y   <- window(trainset, start = c(2023, 7), end = c(2024, 5))
+
+# 2) Define dummy windows (aligned with y)
+cv_train3_crisis <- window(crisis_train, end   = c(2023, 6))
+cv_val3_crisis   <- window(crisis_train, start = c(2023, 7), end = c(2024, 5))
+
+cv_train3_covid  <- window(covid_train,  end   = c(2023, 6))
+cv_val3_covid    <- window(covid_train,  start = c(2023, 7), end = c(2024, 5))
+
+# 3) Build regression data frames for this fold
+train3_xreg <- data.frame(
+  crisis = as.numeric(cv_train3_crisis),
+  covid  = as.numeric(cv_train3_covid)
+)
+
+val3_xreg <- data.frame(
+  crisis = as.numeric(cv_val3_crisis),
+  covid  = as.numeric(cv_val3_covid)
+)
+
+
+## -------- Model 1: trend --------
+m3_trend    <- tslm(cv_train3_y ~ trend)
+f3_trend    <- forecast(m3_trend, h = length(cv_val3_y))
+a3_trend    <- accuracy(f3_trend, cv_val3_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 3,
+             Model = "trend",
+             RMSE  = a3_trend[2, "RMSE"],
+             MAPE  = a3_trend[2, "MAPE"])
+)
+
+
+## -------- Model 2: trend + season --------
+m3_ts      <- tslm(cv_train3_y ~ trend + season)
+f3_ts      <- forecast(m3_ts, h = length(cv_val3_y))
+a3_ts      <- accuracy(f3_ts, cv_val3_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 3,
+             Model = "trend + season",
+             RMSE  = a3_ts[2, "RMSE"],
+             MAPE  = a3_ts[2, "MAPE"])
+)
+
+
+## -------- Model 3: trend + season + crisis --------
+m3_tsc     <- tslm(cv_train3_y ~ trend + season + crisis,
+                   data = train3_xreg)
+f3_tsc     <- forecast(
+  m3_tsc,
+  h       = length(cv_val3_y),
+  newdata = data.frame(crisis = val3_xreg$crisis)
+)
+a3_tsc     <- accuracy(f3_tsc, cv_val3_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 3,
+             Model = "trend + season + crisis",
+             RMSE  = a3_tsc[2, "RMSE"],
+             MAPE  = a3_tsc[2, "MAPE"])
+)
+
+
+## -------- Model 4: trend + season + covid --------
+m3_tsv     <- tslm(cv_train3_y ~ trend + season + covid,
+                   data = train3_xreg)
+f3_tsv     <- forecast(
+  m3_tsv,
+  h       = length(cv_val3_y),
+  newdata = data.frame(covid = val3_xreg$covid)
+)
+a3_tsv     <- accuracy(f3_tsv, cv_val3_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 3,
+             Model = "trend + season + covid",
+             RMSE  = a3_tsv[2, "RMSE"],
+             MAPE  = a3_tsv[2, "MAPE"])
+)
+
+
+## -------- Model 5: trend + season + crisis + covid --------
+m3_tscv    <- tslm(cv_train3_y ~ trend + season + crisis + covid,
+                   data = train3_xreg)
+f3_tscv    <- forecast(
+  m3_tscv,
+  h       = length(cv_val3_y),
+  newdata = val3_xreg   # both crisis & covid
+)
+a3_tscv    <- accuracy(f3_tscv, cv_val3_y)
+
+t_results <- rbind(t_results,
+  data.frame(Fold = 3,
+             Model = "trend + season + crisis + covid",
+             RMSE  = a3_tscv[2, "RMSE"],
+             MAPE  = a3_tscv[2, "MAPE"])
+)
+
+
+t_results
+
+
+
+
+```
+
+### Average Error per Model
+
+```{r}
+cv_summary <- t_results %>%
+  group_by(Model) %>%
+  summarise(
+    mean_RMSE = mean(RMSE),
+    mean_MAPE = mean(MAPE),
+    .groups = "drop"
+  )
+
+cv_summary
+```
+From the Rolling-Origin Cross Validation the model that performs the best with the lowest average prediction error is the model with trend + season + crisis + covid.
+
+#### Evaluation Metrics: Best Regression Model
+
+```{r}
+
+full_xreg <- data.frame(
+  crisis = as.numeric(crisis_train),
+  covid = as.numeric(covid_train)
+)
+
+test_xreg <- data.frame(
+  crisis = as.numeric(crisis_test),
+  covid = as.numeric(covid_test)
+)
+
+best_model <- tslm(trainset ~ trend + season+ crisis + covid, 
+                   data = full_xreg)
+
+## Forecast onto test period
+
+test_forecast  <- forecast(
+  best_model,
+  h = length(testset),
+  newdata = test_xreg
+)
+
+test_accuracy <- accuracy(test_forecast, testset)
+test_accuracy
+
+
+
+```
+The regression model fits the training data very well. The Mean Error (ME) is essentially zero, indicating no systematic over or under prediction during model estimation. The RMSE (17,119) and MAE (10,431) are reasonable and the low MAPE (2.26%) shows that the model predicts historical values with strong accuracy. This Model will be used to compare against the holt-winters model to test and see which model should be used in addressing the business problem.\
+
+
+### Graph Forecasted vs Actual Test Set
+
+```{r}
+test_df <- data.frame(
+  date = time(testset),
+  actual = as.numeric(testset),
+  forecast = as.numeric(test_forecast$mean)
+)
+
+ggplot(data = test_df, aes(x = date)) +
+  geom_line(aes(y = actual, color = "Actual"), size = 1.2) +
+  geom_line(aes(y = forecast, color = "Forecast"), size = 1.2)+
+  labs(
+    title = "Forecast vs Actual (testset)",
+    x = "Time",
+    y = "Sales"
+  )+
+  scale_color_manual(values = c("Actual" = "blue", "Forecast" = "red"))+
+  theme_minimal()
+
+
+```
+
+The graph shows that the forecast values capture the general direction of sales movement but consistently underestimate the magnitude of actual sales.\
+
+# Modeling: Holt-Winters (Post-Structure Break Data)
+
+## 3-fold CV with AAA and AAM
+
+```{r}
+s_results <- data.frame()
+
+## Fold 1: train <= 2021-06, validate 2021,7-2022,6
+
+s_train1 <- window(hw_ts, end = c(2021, 6))
+s_val1 <- window(hw_ts, start = c(2021,7), end = c(2022, 6))
+
+fit1_AAA <- ets(s_train1, model = "AAA", restrict = FALSE)
+fc1_AAA <- forecast(fit1_AAA, h = length(s_val1))
+acc1_AAA <- accuracy(fc1_AAA, s_val1)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 1, Model = "AAA",
+             RMSE = acc1_AAA[2, "RMSE"],
+             MAPE = acc1_AAA[2, "MAPE"]))
+
+
+fit1_AAM <- ets(s_train1, model = "AAM", restrict = FALSE)
+fc1_AAM <- forecast(fit1_AAM, h = length(s_val1))
+acc1_AAM <- accuracy(fc1_AAM, s_val1)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 1, Model  = "AAM",
+             RMSE = acc1_AAM[2, "RMSE"],
+             MAPE = acc1_AAM[2, "MAPE"]))
+
+## Fold 2 train <= 2022-06, validate 2022,7 - 2023,6
+
+s_train2 <- window(hw_ts, end = c(2022,6))
+s_val2 <- window(hw_ts, start = c(2022,7), end = c(2023,6))
+
+fit2_AAA <- ets(s_train2, model = "AAA", restrict = FALSE)
+fc2_AAA <- forecast(fit2_AAA, h = length(s_val2))
+acc2_AAA <- accuracy(fc2_AAA, s_val2)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 2, Model = "AAA",
+             RMSE = acc2_AAA[2, "RMSE"],
+             MAPE = acc2_AAA[2, "MAPE"]))
+
+fit2_AAM <- ets(s_train2, model = "AAM", restrict = FALSE)
+fc2_AAM <- forecast(fit2_AAM, h = length(s_val2))
+acc2_AAM <- accuracy(fc2_AAM, s_val2)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 2, Model = "AAM",
+             RMSE = acc2_AAM[2, "RMSE"],
+             MAPE = acc2_AAM[2, "MAPE"]))
+
+## Fold 3 train <= 2023-06, validate 2023,7 - 2024,6
+
+s_train3 <- window(hw_ts, end = c(2023,6))
+s_val3 <- window(hw_ts, start = c(2023,7), end = c(2024,6))
+
+fit3_AAA <- ets(s_train3, model = "AAM", restrict = FALSE)
+fc3_AAA <- forecast(fit3_AAA, h = length(s_val3))
+acc3_AAA <- accuracy(fc3_AAA, s_val3)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 3, Model = "AAA",
+             RMSE = acc3_AAA[2, "RMSE"],
+             MAPE = acc3_AAA[2, "MAPE"]))
+
+fit3_AAM <- ets(s_train3, model = "AAM", restrict = FALSE)
+fc3_AAM <- forecast(fit3_AAM, h = length(s_val3))
+acc3_AAM <- accuracy(fc3_AAM, s_val3)
+
+s_results <- rbind(s_results,
+  data.frame(Fold = 3, Model = "AAM",
+             RMSE = acc3_AAM[2, "RMSE"],
+             MAPE = acc3_AAM[2, "MAPE"]))
+
+s_results
+
+```
+
+## Comparison of Average Error
+
+```{r}
+s_results_summary <- s_results %>%
+  group_by(Model) %>%
+  summarise(
+    mean_RMSE = mean(RMSE),
+    mean_MAPE = mean(MAPE),
+    .groups = "drop"
+)
+s_results_summary
+
+```
+Comments on Post-structure Break Data 3-Fold CV with AAA and AAM:
+The Holt-Winters models evaluated on the post-structural break dataset included both the AAA and AAM specifications. The AAA model assumes constant seasonal effect, whereas AAM assumes seasonal effects that scale proportionally. Three-fold time series cross validation was used to compare both models, using RMSE and MAPE as evaluation metrics. Based on the average errors across the folds, the AAA model outperformed the AAM model. The AAA model will used to compare against the best holt-winters model run on the full dataset.
+
+# Modeling: Holt-Winters (Full Dataset)
+
+## 3-fold CV with AAA and AAM
+```{r}
+sf_results <- data.frame()
+
+## Fold 1: train <= 2021-06, validate 2021,7-2022,6
+
+sf_train1 <- window(forecast_data, end = c(2021, 6))
+sf_val1 <- window(forecast_data, start = c(2021,7), end = c(2022, 6))
+
+fit1_AAA <- ets(sf_train1, model = "AAA", restrict = FALSE)
+fc1_AAA <- forecast(fit1_AAA, h = length(sf_val1))
+acc1_AAA <- accuracy(fc1_AAA, sf_val1)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 1, Model = "AAA",
+             RMSE = acc1_AAA[2, "RMSE"],
+             MAPE = acc1_AAA[2, "MAPE"]))
+
+
+fit1_AAM <- ets(sf_train1, model = "AAM", restrict = FALSE)
+fc1_AAM <- forecast(fit1_AAM, h = length(sf_val1))
+acc1_AAM <- accuracy(fc1_AAM, sf_val1)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 1, Model  = "AAM",
+             RMSE = acc1_AAM[2, "RMSE"],
+             MAPE = acc1_AAM[2, "MAPE"]))
+
+## Fold 2 train <= 2022-06, validate 2022,7 - 2023,6
+
+sf_train2 <- window(forecast_data, end = c(2022,6))
+sf_val2 <- window(forecast_data, start = c(2022,7), end = c(2023,6))
+
+fit2_AAA <- ets(sf_train2, model = "AAA", restrict = FALSE)
+fc2_AAA <- forecast(fit2_AAA, h = length(sf_val2))
+acc2_AAA <- accuracy(fc2_AAA, sf_val2)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 2, Model = "AAA",
+             RMSE = acc2_AAA[2, "RMSE"],
+             MAPE = acc2_AAA[2, "MAPE"]))
+
+fit2_AAM <- ets(sf_train2, model = "AAM", restrict = FALSE)
+fc2_AAM <- forecast(fit2_AAM, h = length(sf_val2))
+acc2_AAM <- accuracy(fc2_AAM, sf_val2)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 2, Model = "AAM",
+             RMSE = acc2_AAM[2, "RMSE"],
+             MAPE = acc2_AAM[2, "MAPE"]))
+
+## Fold 3 train <= 2023-06, validate 2023,7 - 2024,6
+
+sf_train3 <- window(forecast_data, end = c(2023,6))
+sf_val3 <- window(forecast_data, start = c(2023,7), end = c(2024,6))
+
+fit3_AAA <- ets(sf_train3, model = "AAM", restrict = FALSE)
+fc3_AAA <- forecast(fit3_AAA, h = length(sf_val3))
+acc3_AAA <- accuracy(fc3_AAA, sf_val3)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 3, Model = "AAA",
+             RMSE = acc3_AAA[2, "RMSE"],
+             MAPE = acc3_AAA[2, "MAPE"]))
+
+fit3_AAM <- ets(sf_train3, model = "AAM", restrict = FALSE)
+fc3_AAM <- forecast(fit3_AAM, h = length(sf_val3))
+acc3_AAM <- accuracy(fc3_AAM, sf_val3)
+
+sf_results <- rbind(sf_results,
+  data.frame(Fold = 3, Model = "AAM",
+             RMSE = acc3_AAM[2, "RMSE"],
+             MAPE = acc3_AAM[2, "MAPE"]))
+
+sf_results
+
+
+```
+
+## Comparison of Average Errors
+```{r}
+sf_results_summary <- sf_results %>%
+  group_by(Model) %>%
+  summarise(
+    mean_RMSE = mean(RMSE),
+    mean_MAPE = mean(MAPE),
+    .groups = "drop"
+)
+sf_results_summary
+```
+Comments on Full Data 3-Fold CV with AAA and AAM:
+Similar to the post-structure break analysis, both the AAA and AAM Holt-Winters models were evaluated on the full dataset using three-fold time series cross validation. Based on the average RMSE and MAPE values across the folds, the AAM Model showed superior accuracy. The full-data AAM model will be used in comparison against the best-performing model from the post-structural break dataset. 
+
+
+## Compare Best Holt-Winters Models
+
+```{r}
+post_AAA <- s_results_summary %>% 
+  filter(Model == "AAA") %>% 
+  mutate(Data = "Post-Break")
+
+full_AAM <- sf_results_summary %>% 
+  filter(Model == "AAM") %>% 
+  mutate(Data = "Full Dataset")
+
+comparison_table <- bind_rows(post_AAA, full_AAM)
+comparison_table
+
+```
+The AAA model from the post-structural break data and the AAM model from the full observation date data were compared using the evaluation metrics RMSE and MAPE. The AAM model from the full dataset had the lowest RMSE and MAPE indicating it has superior accuracy. This suggests that using the full dataset will lead to improved forecasting accuracy results.  
+
+
+## Evaluation Metrics: Best Holt Winters Model
+
+```{r}
+train_ts <- window(forecast_data, end = c(2024,6))
+test_ts <- window(forecast_data, start = c(2024,7))
+
+h <- length(test_ts)
+
+final_fit <- ets(train_ts,model = "AAM", restrict = FALSE)
+test_fc <- forecast(final_fit, h = h)
+test_acc <- accuracy(test_fc, test_ts)
+test_acc
+
+```
+The AAM Holt-Winters Model trained over the full dataset has a relatively low RMSE and MAE value compared to the scale of the data. The MASE value is slightly below one (0.978), meaning the model performs better than an naive seasonal benchmark. Also the Theil's U statistic of 0.37 is well below one meaning the forecast outperforms a simple random-walk.\
+
+The Evaluation phase will compare the best regression model against the AAM Holt-Winters model trained over the full dataset. 
+
+
+# Evaluation
+
+## Compare Best Forecasting Models
+
+```{r}
+
+cat("\n=== Holt-Winters Test Accuracy ===\n")
+test_acc["Test set", ]
+
+cat("\n=== Regression Test Accuracy ===\n")
+test_accuracy["Test set", ]
+
+
+
+
+
+```
+The Holt-Winters AAM model should be deployed as the final forecasting solution because it delivers substantially lower forecast errors than the regression model and demonstrates superior predictive performance across all evaluation metrics, including RMSE, MAPE, MASE, and Theil’s U. This indicates that Holt-Winters captures the underlying structure of retail sales more effectively and provides more reliable forward-looking predictions.
+
+
+
+# Deployment: Holt-Winters
+
+## Forecasting 2025-07 - 2025-12
+```{r}
+library(ggplot2)
+library(forecast)
+
+final_train <- forecast_data
+
+forecast_fit <- ets(final_train, model = "AAA", restrict = FALSE)
+future_fc <- forecast(forecast_fit, h = 6)
+
+# numeric time limits for Jan 2025 to Dec 2025
+x_min <- 2025 + (1 - 1) / 12      # 2025.000
+x_max <- 2025 + (12 - 1) / 12     # 2025.9167
+
+autoplot(future_fc) +
+  labs(title = "Retail Sales Forecast – Full Year 2025",
+       x = "Time",
+       y = "Sales") +
+  lims(x=c(2020,2026)) +
+  theme_minimal()
+
+```
+The graph presents a six-month forecast generated by the Holt-Winters model. The projected values follow a seasonal pattern and overall trend that closely resemble those observed in previous years. This consistency indicates that the Holt-Winters model is effectively capturing the underlying structure of the retail sales data and provides confidence in its forecasting accuracy.
+
+## Answer to Business Question
+This business problem guiding this analysis was to is to build a forecast model capable of accurately projecting six months into the future for retail stakeholders. Through modeling and evaluation the AAM Holt-Winters smoothing model trained on the entire dataset offered the most accurate predictions. This is supported by the graph above as the 6 months of forecasted values follow similar seasonal patterns and overall trend from previous years. This tool can be used by retail stakeholders in predicting future dates of retail sales data.\
+
+
+## Answer to Research Questions
+
+1.How accurately can different forecasting methods predict future sales?\
+
+The analysis demonstrates that forecasting methods vary in their ability to accurately predict future sales. While both models provide reasonable estimates certain forecasting models will perform better than others so it is worth exploring multiple different methods. However, based on this analysis, forecasting methods perform far better than a random or naïve approach.\
+
+2.Does including pre-break data harm or improve forecasting accuracy?\
+
+For this analysis including pre-break structure helped improve forecast accuracy for the Holt-Winters model. In theory, the opposite is often expected, models typically perform better when trained only on post-break data, since older structural patterns may no longer reflect current dynamics. However, in this case the earlier data still contained valuable seasonal and trend information that strengthened the model’s ability to forecast future values.\
+
+## Business Recommendations
+If retail stakeholders were to implement the Holt-Winters AAM model I have two business recommendations. The first recommendation is to use it for short-term operational planning. Given that the Holt-Winters AAM model consistently produced the most accurate six-month forecasts and successfully captured seasonal retail patterns, retail stakeholders could adopt this model as a primary tool for short-term sales planning. The second business recommendation is to retain long run historical data. Although structural break theory suggests older data may sometimes distort model accuracy, this analysis showed that retaining pre-break historical data improved the Holt-Winters model’s performance. This indicates that long-run seasonal cycles and trend components remain valuable for retail stakeholders to produce more accurate forecasts.\
+
+# References
+
+## Citation of orignial data source with authors
+U.S. Census Bureau. Retailers Sales [RETAILSMNSA]. FRED, Federal Reserve Bank of St. Louis. Retrieved from https://fred.stlouisfed.org/series/RETAILSMNSA
+
+
+
+## Citation of ChatGP
+OpenAI. (2025). ChatGPT (GPT-5.1 Thinking) [Large language model].https://chat.openai.com/
+
+
+
+## Version of R
+
+```{r}
+one <- print(citation(), style = "textVersion")
+cite.version <- R.Version()
+pip <- as.character(cite.version$version.string)
+cat("Version", pip, "\n")
+cat("  \n")
+
+```
+
+
+
+## R packages used during analysis
+
+Wickham H, Bryan J (2025). readxl: Read Excel Files. R package version 1.4.5, https://readxl.tidyverse.org.
+  
+
+Cui B (2025). DataExplorer: Automate Data Exploration and Treatment. R package version 0.8.4, http://boxuancui.github.io/DataExplorer/.
+  
+
+Wickham H, Averick M, Bryan J, Chang W, McGowan LD, François R, Grolemund G, Hayes A, Henry L, Hester J, Kuhn M, Pedersen TL, Miller E, Bache SM, Müller K, Ooms J, Robinson D, Seidel DP, Spinu V, Takahashi K, Vaughan D, Wilke C, Woo K, Yutani H (2019). “Welcome to the tidyverse.” Journal of Open Source Software, 4(43), 1686. https://doi.org/10.21105/joss.01686.
+  
+
+Wickham H, François R, Henry L, Müller K, Vaughan D (2025). dplyr: A Grammar of Data Manipulation. R package version 1.1.4, https://dplyr.tidyverse.org.
+  
+
+Wickham H (2016). ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, https://ggplot2.tidyverse.org.
+  
+
+Grolemund G, Wickham H (2011). “Dates and Times Made Easy with lubridate.” Journal of Statistical Software, 40(3), 1–25. https://www.jstatsoft.org/v40/i03/.
+  
+
+Hyndman RJ, Khandakar Y (2008). “Automatic Time Series Forecasting: The forecast Package for R.” Journal of Statistical Software, 27(3), 1–22. https://doi.org/10.18637/jss.v027.i03.
+  
+
+Zeileis A, Leisch F, Hornik K, Kleiber C (2002). “strucchange: An R Package for Testing for Structural Change in Linear Regression Models.” Journal of Statistical Software, 7(2), 1–38. https://doi.org/10.18637/jss.v007.i02.
+
+
+
+
+
+
+
