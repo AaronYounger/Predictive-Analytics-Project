@@ -1,0 +1,1279 @@
+---
+title: "Classification Report"
+author: "Aaron Younger"
+date: "December 10, 2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+  error: false
+toc: true
+editor: source
+---
+
+# Business Understanding
+
+## Business Problem
+
+The data used in this analysis comes from direct market campaigns via phone calls by a Portuguese banking institution. The primary goal of this analysis is to build classification models to predict whether a client will subscribe to a term deposit. A term deposit represents a contract between an investor and a financial institution where a sum of money is locked away for a predetermined period in exchange for a fixed interest rate. The ability for banks to predict whether a client will subscribe to a term deposit is highly valuable for several reasons. First, banks allocate significant budget on marketing campaigns, and predictive models that helps identify clients who are most likely to say "yes" improves campaign efficiency and cost. Second, accurately targeting likely subscribers increases the volume of term deposits, which strengthens the bank’s funding base in a stable and predictable manner. Finally, these models can help support strategic decision-making as banks can tailor product offerings and interest rates based off specific customer segments.\
+
+Based off this information, the **Business Problem** is how to identify which clients are most likely to subscribe to a term deposit.\
+
+
+## Two Research Questions
+
+Along with the business problem, this report explores two research questions:\
+
+1.  Which variables are most significant in predicting term deposit subscriptions?\
+
+2.  Are there specific times of the year when clients are more likely to subscribe to a term deposit?\
+
+Now that the business problem and research questions have been clearly defined, the next step in this report is exploring the data to better understand its structure, key variables, and potential patterns relevant to term deposit subscriptions. This **Data Understanding** phase provides the foundational insight needed for effective data preparation for modeling.\
+
+# Data Understanding
+
+```{r}
+suppressWarnings(RNGversion("3.5.3"))
+```
+
+```{r}
+library(readxl)
+library(DataExplorer)
+library(tidyverse)
+library(dplyr)
+library(dlookr)
+library(tidyr)
+library(psych)
+library(e1071)
+library(SmartEDA)
+library(flextable)
+library(ggplot2)
+library(moments)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(gains)
+library(pROC)
+library(car)
+library(DescTools)
+library(knitr)
+library(formattable)
+library(tibble)
+library(DALEX)
+library(gridExtra)
+
+```
+
+## Import Dataset
+
+```{r}
+Bank_Classification <- read_excel("Bank_Classification.xlsx")
+View(Bank_Classification)
+
+Bank_Classification <- Bank_Classification %>% 
+  mutate_if(is.character, as.factor)
+
+Bank_Classification %>% head(6)
+```
+
+when importing the dataset, I converted the categorical variables stored as character strings to factors. This step is important because R treats factor variables differently from character variables. Factors allow for proper statistical analysis and model building.\
+
+## EDA
+
+### Dataset EDA
+
+#### Number of Rows and Columns
+
+```{r}
+table_info <- tibble(
+  Statistic = c("Number of Columns", "Number of Rows"),
+  Value = c(ncol(Bank_Classification), nrow(Bank_Classification))
+)
+
+table_info
+```
+This dataset contains 17 variables, as indicated by the number of columns, and 4,521 observations, as indicated by the number of rows.\
+
+#### Data Structure and Completeness Overview
+```{r}
+Bank_Classification %>% plot_intro()
+
+```
+This graph shows that ten variables are categorical variables and the remaining seven variables are numeric. This dataset also contains no missing values.\
+
+Below is a short description of all the variables found in this dataset.\
+- Age: Represents the Age of the Client.\
+- Job: Represents the type of job the Client has.\
+- Marital: Represents the marital status of the client.\
+- Education: Represents the Education level of the client.\
+- Default: A binary variable that shows if the client has credit in default.  - Balance: The Average yearly income the client is earning, value in Euros.\
+- Housing: A binary variable showing if the client has a house loan.\
+- Loan: A binary variable showing if the client has a personal loan.\
+- Contact: Represents the clients communication type.\
+- Day: Represents the last contact a client has had of the month.\
+- Month: Represents the last contact month of the year for a client.\
+- Duration: Represents the last contact duration of the client in seconds.\
+- Campaign: Represents the number of times the client was reached during a campaign, includes last contact.\
+- Pdays: Represents the number of days that has passed since a client has been last contacted from a previous campaign. (-1 means client was not previously contacted).try and convert this into a mutli layer nominal variable. (not contacted, low, medium, high contacted).\
+- Previous: Represents the total number of contacts before the campaign for the client.\
+- Poutcome: Outcome of the previous marketing campaign.\
+- Y (Dependent Variable): A binary variable showing if the client has subscribed a term deposit. (yes or no).\
+
+### Categorical Variable EDA
+Since the dataset contains both categorical and numerical variables, the exploratory data analysis (EDA) will be conducted in two parts: one focusing on categorical variables and the other on numeric variables. First, this analysis will explore the relationships and patterns found in categorical variables.\
+
+
+#### Create Categorical Variables
+
+```{r}
+Bank_Classification_new <- Bank_Classification %>% 
+  mutate(
+    # pdays: -1 means never contacted
+    pdays_bin = case_when(
+      pdays == -1 ~ "Not Contacted",
+      pdays >=   0 & pdays <= 150 ~ "0 - 150 Days",
+      pdays >= 151 & pdays <= 300 ~ "151 - 300 Days",  # label fixed
+      pdays > 300 ~ "300+ Days",
+      TRUE ~ "Unknown"
+    ),
+    # previous: 0 = no prior contacts; avoid overlapping 0 twice
+    previous_bin = case_when(
+      previous == 0 ~ "Not Contacted",
+      previous >= 1 & previous <= 5  ~ "Low Contact",
+      previous >= 6 & previous <= 40 ~ "High Contact",
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+  select(-pdays, -previous) %>%                 # drop originals
+  mutate(across(where(is.character), as.factor)) # was mutate_if(...)
+
+cat("Distribution of Bins-Pdays")
+table(Bank_Classification_new$pdays_bin)
+
+cat("\n Distribution of Bins-Previous")
+table(Bank_Classification_new$previous_bin)
+
+## Drop Unknown Previous and or pday variables
+ Bank_Classification_new <- Bank_Classification_new %>%
+  filter(pdays_bin != "Unknown", previous_bin != "Unknown")
+
+View(Bank_Classification_new)
+
+```
+
+Before creating a subset containing only categorical variables, I first addressed two variables—pdays and previous—which were heavily dominated by single values (–1 and 0). To reduce this skewness and improve interpretability, both variables were grouped into binned categories. Binning these variables allowing their categories to more meaningfully reflect their influence on the dependent variable.\
+
+#### Create Categorical Subset
+
+```{r}
+## Create subset dataset
+
+Bank_Classification_c <- Bank_Classification_new %>% 
+  select(where(is.factor))
+head(Bank_Classification_c)
+```
+
+A subset from the original dataset was made just containing categorical variables.\
+
+#### Explore Proportions of Categorical Variables
+
+```{r}
+Bank_Classification_c %>% plot_bar()
+```
+An important step in exploratory data analysis is to check level proportions within categorical variables. If a categorical variable exhibits class imbalance, the minority category may be underweighted or overlooked by the model, potentially causing important relationships within smaller groups to be missed. As seen from the bar plots, class imbalance persists in almost every categorical variable. This problem will need to be addressed.\
+
+
+```{r}
+## Proportion of Categorical Variables based off dependent variable. 
+Bank_Classification_c %>% plot_bar(by="y")
+
+```
+
+On top of checking for class level imbalance it is equally as important to check for distribution of subscription outcomes across each categorical variable. Based off the bar plots, there is clear class imbalance among the dependent variable. "No" responses substantially outnumber "yes" responses among all the categorical variable.\
+
+
+#### Proportion of Dependent Variable
+
+```{r}
+cat("Propotion of the Dependent Variable \n")
+prop.table(table(Bank_Classification_c$y))
+
+```
+This table showing the proportion of the dependent variable further confirm class imbalance, with 88.5% of clients not subscribing and only 11.5% subscribing. This class imbalance can be addressed using several modeling techniques, which will be explored later in the analysis.\
+
+#### Chi-Square Test of Signficance
+
+```{r}
+chi_job <- chisq.test(table(Bank_Classification_c$job, Bank_Classification_c$y),
+                      simulate.p.value = TRUE, B = 5000)
+
+chi_marital <- chisq.test(table(Bank_Classification_c$marital, Bank_Classification_c$y),
+                          simulate.p.value = TRUE, B = 5000)
+
+chi_education <- chisq.test(table(Bank_Classification_c$education, Bank_Classification_c$y),
+                            simulate.p.value = TRUE, B = 5000)
+
+chi_default <- chisq.test(table(Bank_Classification_c$default, Bank_Classification_c$y),
+                          simulate.p.value = TRUE, B = 5000)
+
+chi_housing <- chisq.test(table(Bank_Classification_c$housing, Bank_Classification_c$y),
+                          simulate.p.value = TRUE, B = 5000)
+
+chi_loan <- chisq.test(table(Bank_Classification_c$loan, Bank_Classification_c$y),
+                       simulate.p.value = TRUE, B = 5000)
+
+chi_contact <- chisq.test(table(Bank_Classification_c$contact, Bank_Classification_c$y),
+                          simulate.p.value = TRUE, B = 5000)
+
+chi_month <- chisq.test(table(Bank_Classification_c$month, Bank_Classification_c$y),
+                        simulate.p.value = TRUE, B = 5000)
+
+chi_poutcome <- chisq.test(table(Bank_Classification_c$poutcome, Bank_Classification_c$y),
+                           simulate.p.value = TRUE, B = 5000)
+
+chi_pdays_bin <- chisq.test(table(Bank_Classification_c$pdays_bin, Bank_Classification_c$y),
+                            simulate.p.value = TRUE, B = 5000)
+
+chi_previous_bin <- chisq.test(table(Bank_Classification_c$previous_bin, Bank_Classification_c$y),
+                               simulate.p.value = TRUE, B = 5000)
+
+chi_results <- list(
+  job = chi_job,
+  marital = chi_marital,
+  education = chi_education,
+  default = chi_default,
+  housing = chi_housing,
+  loan = chi_loan,
+  contact = chi_contact,
+  month = chi_month,
+  poutcome = chi_poutcome,
+  pdays_bin = chi_pdays_bin,
+  previous_bin = chi_previous_bin
+)
+
+chi_table <- data.frame(
+  Variable = names(chi_results),
+  Chi_Square = sapply(chi_results, function(x) x$statistic),
+  DF = sapply(chi_results, function(x) x$parameter),
+  P_Value = sapply(chi_results, function(x) x$p.value)
+)
+
+chi_table
+
+
+
+
+```
+Along with checking class and level imbalance, a chi-square test is used to evaluate whether each categorical variable is significantly associated with the dependent variable. The table above presents the p-values for each test, and variables with p-values below 0.01 are considered statistically significant. All variables except default show a significant association with the subscription outcome. This is helpful because it indicates which categorical variables will most likely contribute to accurate classification of the dependent variable.\
+
+
+### Numeric EDA
+
+A subset from the original dataset was made just containing numerical variables.
+
+#### Create Numeric Subset
+
+```{r}
+Bank_Classification_n <- Bank_Classification_new %>% 
+  select(where(is.numeric), y)
+Bank_Classification_n %>% head()
+
+```
+
+Similar to the reasoning for creating a categorical subset, I also created a numeric subset to focus the exploratory analysis on identifying patterns and assessing significance within the numeric variables.
+
+#### Distribution of Numeric Values
+
+```{r}
+Bank_Classification_n %>% plot_density()
+```
+The distribution of the numeric variables are checked using a density plot. Based off the density plots above, balance, campaign, duration show extreme right skewness. The age variable is right skewed and the day variable appears to be multimodal showing several peaks rather than a single dominant variable.\
+
+#### Descriptive Statistics
+
+```{r}
+
+ExpNumStat(Bank_Classification_n, by="A", Outlier=TRUE, Qnt=c(.25, .75), round = 2) %>%
+	flextable()
+
+```
+
+The descriptive statistics table provides a deeper examination of the spread and shape of the numeric variables. One notable observation is that balance contains both negative and zero values. This is important to note as negative numbers can restrict certain data transformations. This table also confirms the extreme right-skewness seen in the density plots for balance, campaign, and duration. The skewness values include 6.59 for balance, 4.47 for campaign, and 2.77 for duration which indicate long right tails being pulled by potential outliers. These three variables all show kurtosis greater than 3, suggesting there to be extreme values. Although age and day exhibit slight right skewness, the degree of skewness does not pose any issue.\
+
+#### Diagnose Potential Outliers
+
+```{r}
+diagnose_outlier(Bank_Classification_n)
+
+```
+
+Comments on Diagnosing Outliers:\
+The three numeric variables that require further diagnosis are balance, duration, and campaign, as they contain a good amount of outliers. The descriptive table shows that these extreme values inflate the mean for each variable, indicating that the distribution is heavily influenced by outliers. However, outlier removal must be approached with caution. While these values are statistically extreme, they may still carry meaningful information in relation to the dependent variable. For example, removing all high balance values could eliminate an important relationship such as the possibility that clients with larger account balances are more likely to subscribe to a term deposit. To evaluate this properly boxplots will be generated to visually assess the outliers. If their are clusters of observations with a few reaching beyond it, those observations will be eliminated. This approach ensures that meaningful patterns are kept while minimizing distortion from set apart observations. This will be done in the Data Preparation part of the Report.\
+
+Age and day do not require outlier removal, as their potential outliers are minimal and do not meaningfully impact the overall mean or distribution.\
+
+
+### Check Correlations
+
+```{r}
+Bank_Classification_n %>% plot_correlation()
+
+```
+All numeric variables have weak correlation with the dependent variable except for duration which has moderately strong correlation. Although the numeric variables show low correlation to the dependent variable, it does not diminish their potential use in non-linear classification problems. This means that, depending on the modeling approach, certain variables may be directly useful in their current form, while others may require transformations to fully capture their predictive value.\
+
+## Summary of Data Understanding
+The Data Understanding phase revealed several important characteristics of the dataset that will guide the upcoming data preparation steps. The dependent variable exhibits class imbalance, with the majority of clients not subscribing to a term deposit, indicating that modeling techniques may need to address imbalance to avoid biased predictions. Categorical exploration showed uneven level distributions and identified strong associations between most categorical variables and subscription outcomes, with the exception of default, which offered little predictive value.\
+Numeric exploration highlighted significant skewness, heavy tails, and numerous outliers in variables such as balance, duration, and campaign, while age and day did not require cleaning. Correlation analysis confirmed that most numeric variables have weak linear relationships with the dependent variable, suggesting that nonlinear models may be more effective and that transformations could be beneficial for linear methods. Collectively, these findings emphasize the need for thoughtful preprocessing—such as handling outliers, addressing class imbalance, and possibly preparing numeric transformations to ensure that the subsequent modeling phase is both accurate and reliable.\
+
+# Data Preparation
+
+## Look Into Outliers
+
+```{r}
+plot_boxplot(Bank_Classification_n, by = "y")
+
+```
+Two boxplots were graphed for each numeric variable, one boxplot representing one class of the dependent variable, the other boxplot representing the second class of the dependent variable.\
+For the balance variable it was clear that two numbers extended beyond the normal cluster of outliers. These two balance values were 42,045 and 71,188.\
+For the campaign variable it was also clear that two campaign numbers extended beyond the normal cluster of outliers. The two campaing values were 44 and 50.\
+For the duration variable three values extended beyond the normal cluster of outliers. These campaign values were 2456, 2769.\
+These values will be removed to ensure that the models are not disproportionately influenced by values that do not represent typical customer behavior and to also help with underlying distribution.\
+
+## Remove Outliers
+
+```{r}
+## Remove Outliers from Balance
+Bank_Classification_new <- Bank_Classification_new %>%
+  filter(!balance %in% c(42045, 71188))
+
+Bank_Classification_n <- Bank_Classification_n %>%
+  filter(!balance %in% c(42045, 71188))
+
+## Remove outliers from Duration
+Bank_Classification_new <- Bank_Classification_new %>% 
+  filter(!duration %in% c(2456, 2769, 3025))
+  
+Bank_Classification_n <- Bank_Classification_n %>% 
+  filter(!duration %in% c(2456, 2769, 3025))
+
+## Remove outliers from campaign
+Bank_Classification_new <- Bank_Classification_new %>% 
+  filter(!campaign %in% c(50, 44))
+
+Bank_Classification_n <- Bank_Classification_n %>% 
+  filter(!campaign %in% c(50, 44)) 
+
+```
+
+### Revisit Skewness
+
+```{r}
+b_skew <- e1071::skewness(Bank_Classification_n$balance)
+d_skew <- e1071::skewness(Bank_Classification_n$duration)
+c_skew <- e1071::skewness(Bank_Classification_n$campaign)
+
+skew_table <- data.frame(
+  Variable = c("Balance", "Duration", "Campaign"),
+  Skewness = c(b_skew, d_skew, c_skew)
+)
+skew_table
+
+
+```
+Removing the identified extreme outliers helped reduce the right skewness in the balance, duration, and campaign variables. Balance skewness decreased from 6.59 to 4.29, duration skewness decreased from 2.77 to 2.41, and campaign skewness decreased from 4.74 to 3.99. This demonstrates that removing only a small number of extreme observations was effective in reducing skewness while preserving the underlying patterns and overall structure of the data.\
+
+### Plot Normality, Q-Q Plots
+
+```{r}
+Bank_Classification_n %>% plot_qq()
+
+```
+The Q-Q Plots shown above visualize the distribution of the numeric variables. All variables deviate form normality, some greater than others. Based off the models I will be using, normality can pose an issue. The models that will be used in this report are classification trees, KNN, and Logistic Regression.\
+
+Classification trees are not affected by normality and have no normality assumptions, so the normality of variables will not affect model performance.\
+
+KNN also is not affected by normality as it has no normality assumption, so normality of variables will not affect model performance.\
+
+Logistic Regression predictors do not need to be normal but the residuals need to be roughly symmetrical, so data transformations may be needed.\
+
+
+## Check Data Types - Classification Tree
+
+```{r}
+Bank_Classification_new %>% str()
+
+Bank_Classification_new$y <- ifelse(Bank_Classification_new$y == "yes", 1, 0)
+
+Bank_Classification_new$y <- as.factor(Bank_Classification_new$y)
+
+```
+The Data Types are correct and ready to model with for classification trees. All the categorical variables are factors and the numerical variables are numeric. The dependent variable "y" is a factor and is in a 1,0 binary format. 1 represents yes and 0 represents no.\
+
+## Partition Data - Classification Tree
+
+```{r}
+set.seed(1)
+mytree_index <- createDataPartition(Bank_Classification_new$y, p = 0.7, list = FALSE)
+tree_trainset <- Bank_Classification_new[mytree_index,]
+tree_testset <- Bank_Classification_new[-mytree_index,]
+
+## Check distribution among train and test set
+
+cat("Distribution of DepVar-Trainset")
+prop.table(table(tree_trainset$y))
+
+cat("\n Distribution of DepVar-Testset")
+prop.table(table(tree_testset$y))
+
+```
+This dataset is partitioned into a 70/30 split so the data can be trained then tested. A set.seed of 1 was also given for reproducibility of the model results. The proportion of the dependent variable was very close between the trainset and testset as well indicating the data split preserved the original class distribution.\
+
+To address the dependent variable class imbalance, a weighted classification tree will be used to mitigate the disproportionate representation of the dependent variable. However, for the categorical predictors, there was no practical or meaningful way to bin or consolidate individual levels without distorting the underlying information. As a result, the level imbalance will simply be acknowledged and carried forward into the classification tree modeling, with the understanding that tree-based methods inherently downweight rare levels and that any remaining imbalance will be reflected in the natural structure of the data.\
+
+
+## Convert Data for Modeling - KNN
+
+### Create dataset for KNN modeling
+
+```{r}
+knn_data <- Bank_Classification_new
+knn_data$day <- as.factor(knn_data$day)
+
+
+## One hot encode appropriate categorical variables
+dummies <- dummyVars(~job + marital + education + contact + month + poutcome + pdays_bin + previous_bin + day, data = knn_data, fullrank = TRUE)
+
+encoded_vars <- predict(dummies, newdata = knn_data) %>% as.data.frame()
+
+knn_data <- cbind(
+  knn_data %>% select(-job, -marital, -education, -contact, -month, -poutcome, -pdays_bin, -previous_bin, -day), encoded_vars
+)
+
+## Scale numeric variables
+
+knn_data <- knn_data %>% 
+  mutate(scaled_age = scale(age),
+         scaled_balance = scale(balance),
+         scaled_duration = scale(duration),
+         scaled_campaign = scale(campaign)) %>% 
+  select(c(-age, -balance, -duration, -campaign))
+
+
+
+## Change binary's to 1/0
+knn_data$default <- ifelse(knn_data$default == "yes", 1, 0)
+knn_data$housing <- ifelse(knn_data$housing == "yes", 1, 0)
+knn_data$loan    <- ifelse(knn_data$loan == "yes", 1, 0)
+
+names(knn_data) <- make.names(names(knn_data), unique = TRUE)
+head(names(knn_data))
+
+
+```
+Because KNN is a distance-based algorithm, proper preprocessing is essential to ensure that all predictors contribute appropriately to the model. Categorical variables must first be converted into numerical form through one-hot encoding so that the algorithm can compute distances between observations. Numeric variables require scaling because KNN is sensitive to differences in scale. Binary yes/no variables are also converted to 0/1 to maintain consistent numerical representation across the dataset. Finally, column names are standardized to avoid issues. These preprocessing steps allowed for the creating of an appropriate KNN dataset that can be used to model.\
+
+## Eliminate Redundant Variables
+
+```{r}
+knn_data$y <- as.numeric(knn_data$y)
+
+cor_vec <- sapply(names(knn_data), function(v) cor(knn_data[[v]], knn_data$y))
+
+threshold <- 0.05
+strong_vars <- names(cor_vec[abs(cor_vec) >= threshold])
+
+cat("Strongly Correlated Predictors:\n")
+print(strong_vars)
+
+knn_data_filtered <- knn_data[, strong_vars]
+knn_data_filtered$y <- knn_data$y   # ensure y is present
+
+str(knn_data_filtered)
+
+library(randomForest)
+
+rf_model <- randomForest(as.factor(y) ~ ., data = knn_data_filtered, importance = TRUE)
+
+imp <- importance(rf_model)
+
+imp_df <- data.frame(
+  Variables = rownames(imp),
+  MeanDecreaseAccuracy = imp[, "MeanDecreaseAccuracy"],
+  MeanDecreaseGini = imp[, "MeanDecreaseGini"],
+  row.names = NULL
+)
+
+threshold1 <- 2
+strong_var <- imp_df$Variables[imp_df$MeanDecreaseAccuracy > threshold1]
+
+knn_model_data <- knn_data_filtered[, c(strong_var, "y")]
+
+print(names(knn_model_data))
+str(knn_model_data)
+
+rf_model_final <- randomForest(as.factor(y) ~ ., data = knn_model_data, importance = TRUE)
+importance(rf_model_final)[order(importance(rf_model_final)[,1], decreasing = TRUE), ]
+
+```
+Because KNN is a distance-based algorithm, redundant or irrelevant predictors can introduce noise and significantly degrade model performance. To reduce redundancy and improve predictive efficiency, I applied two feature-selection steps: correlation filtering and Random Forest variable importance. Through this process, the dataset was reduced from 84 variables to 23, yielding a cleaner and more informative feature set for KNN modeling.\
+
+Correlation filtering was used to identify predictors that had little to no association with the dependent variable. Variables with very weak correlation (|correlation coefficient| < 0.05) were considered uninformative, as they contribute minimal predictive power and act as noise in a distance-based model.\
+
+To further refine the feature set, a Random Forest model was used to evaluate variable importance. The Mean Decrease Accuracy metric identifies variables that meaningfully improve model accuracy, while low values indicate predictors that introduce noise or contribute very little.\
+
+Variables with a Mean Decrease Accuracy < 2 were removed, which refined the dataset from 29 variables down to 23 final predictors. These remaining variables represent meaningful contributors to model performance and form the basis of the KNN modeling dataset.\
+
+This two-step filtering process of correlation followed by Random Forest importance ensures that the final dataset used for KNN is both compact and highly informative, minimizing noise and maximizing model accuracy.\
+
+
+
+## Data Partition - KNN
+
+```{r}
+knn_model_data$y <- as.factor(knn_model_data$y)
+
+set.seed(1)
+knn_index <- createDataPartition(knn_model_data$y, p =0.6, list=FALSE)
+knn_train <- knn_model_data[knn_index, ]
+knn_test <- knn_model_data[-knn_index, ]
+
+knn_train <- knn_train %>% 
+  mutate(y = ifelse(y==2, 1, 0))
+
+knn_test <- knn_test %>% 
+  mutate(y = ifelse(y==2,1,0))
+
+knn_train$y <- as.factor(knn_train$y)
+knn_test$y <- as.factor(knn_test$y)
+
+## Distribution of dependent variable is close
+prop.table(table(knn_train$y))
+prop.table(table(knn_test$y))
+
+
+
+```
+
+Comments on KNN Data Partitioning:\
+Before modeling the dataset is partitioned into a 60/40 split so the data can be trained then tested. A set.seed of 1 was also given for reproducibility of the model results. The dependent variable for both train and test set was coded into a binary so no = 0 and yes = 1. The proportion of the dependent variable was very close between the trainset and testset as well.\
+
+## Data Partition - Logistic Regression
+
+```{r}
+Bank_Classification_new$y <- as.factor(Bank_Classification_new$y)
+
+set.seed(1)
+LR_index <- createDataPartition(Bank_Classification_new$y, p=0.75, list=FALSE)
+lr_trainset <- Bank_Classification_new[LR_index, ]
+lr_testset <- Bank_Classification_new[-LR_index, ]
+
+
+cat("Depvar Proportion train set")
+prop.table(table(lr_trainset$y))
+cat("Depvar Proportion test set")
+prop.table(table(lr_testset$y)) ## Proportion of dependent variable are close between both train and test set. 
+
+
+```
+Before modeling the dataset is partitioned into a 75/25 split so the data can be trained then tested. A set.seed of 1 was also given for reproducibility of the model results. The proportion of the dependent variable was very close between the trainset and testset as well.\
+
+To address class imbalance seen in the dependent variable, a weighted logistic regression model will be used in the modeling phase to help mitigate that.\
+
+## Summary of Data Preparation
+
+The data preparation phase focused on ensuring that each modeling technique received an appropriately structured and optimized dataset. For logistic regression and classification trees, minimal preprocessing was required beyond the initial cleaning from the Data Understanding stage. To address the substantial class imbalance in the dependent variable, weighted modeling was planned for the classification tree and logistic regression. Categorical level imbalance was evaluated, but no meaningful grouping or binning could be applied without distorting the underlying information, so the imbalance was simply noted for interpretation. In contrast, KNN required extensive preprocessing due to its sensitivity to scale. Categorical variables were one-hot encoded, numeric predictors were standardized, and binary variables were converted to numeric format. Feature selection was performed through correlation filtering and Random Forest variable importance, reducing the predictor set from 84 variables to 23. Together, these preparation steps ensured that each model logistic regression, classification tree, and KNN, could be trained on data that was properly structured for its specific methodological requirements.\
+
+
+# Modeling - Classification Tree
+
+## Non-Weighted Best Tree
+
+```{r}
+tree_myctrl = trainControl(method = "cv", number = 10)
+
+set.seed(1)
+wu_tree <- train(y ~., data = tree_trainset, method = "rpart", trControl = tree_myctrl, tuneGrid = NULL)
+
+predict_class <- predict(wu_tree, tree_testset, type = "raw")
+cm_tree <- caret::confusionMatrix(predict_class, tree_testset$y, positive = "1")
+cm_tree
+
+precision <- unname(cm_tree$byClass['Pos Pred Value'])
+recall <- unname(cm_tree$byClass['Sensitivity'])
+tree_default_f1 <- 2 *((precision*recall) / (precision + recall))
+cat("F1 Score: ", round(tree_default_f1,3),"\n")
+
+
+```
+This model struggles due to imbalance in the dependent variable. This can be seen in the high specificity but low sensitivity score. The results of this model is to give a baseline for the weighted model.\
+
+## Weighted Best Tree
+
+### Create Weights
+```{r}
+class_counts <- table(tree_trainset$y)
+
+cat("Class Counts (n) for Admitted from the Training Dataset")
+cat("\nClass Total:", sum(class_counts), "\n")
+
+tree_wts <- ifelse(tree_trainset$y == 1,
+       (0.5 * sum(class_counts)) / class_counts[2],
+       (0.5 * sum(class_counts)) / class_counts[1])
+```
+To address the imbalance in the dependent variable, class weights were created based on the inverse frequency of each class in the training dataset. This weighting scheme ensures that the minority class receives proportionally greater influence during model training, preventing the tree from being biased toward the majority class.\
+
+### Model Weighted Tree
+```{r}
+set.seed(1)
+
+w_tree <- train(as.factor(y) ~., data = tree_trainset, method = "rpart", trControl = tree_myctrl, weights = tree_wts, tuneGrid = NULL)
+
+```
+
+### Test Weighted Tree
+```{r}
+predicted_class <- predict(w_tree, tree_testset, type = "raw")
+tree_cm <- caret::confusionMatrix(predicted_class, as.factor(tree_testset$y), positive = "1")
+tree_cm
+
+tree_f1 <- with(as.list(tree_cm$byClass),
+				 (2*(`Pos Pred Value` * Sensitivity)) / (`Pos Pred Value` + Sensitivity))
+cat("F1 Score: ", tree_f1, "\n")
+
+
+levels(tree_trainset$poutcome) # Failure
+levels(tree_trainset$contact) # telephone
+
+```
+Although the weighted classification tree has a slightly lower overall accuracy than the unweighted tree, the balanced accuracy is substantially higher, and the sensitivity and specificity are much more comparable. This indicates that the weighted model is far better at distinguishing between the two classes of the dependent variable rather than being biased toward predicting the majority class. The higher F1 score further supports this conclusion, as it reflects improved performance on the minority “yes” class by balancing precision and recall. Together, these metrics demonstrate that the weighted tree provides a more reliable model making it the superior classification tree despite a marginally lower raw accuracy.\
+
+
+### Variable Importance
+```{r}
+cat("Variable Importance \n")
+print(caret::varImp(w_tree))
+```
+The Variables that had the most importance in relation to the dependent variable for the weighted classification tree is duration, poutcomesuccess, and contactunknown. Variable importance signifies which predictors contribute the most to the model's ability to correclty classify observatoins.\
+
+
+### Print Weighted Tree
+```{r}
+
+cat("\nTree Diagram with Counts \n")
+prp(w_tree$finalModel, type = 1, extra = 1, under = TRUE, digits=3)
+```
+
+
+Best Tree Diagram Interpretation:\
+- Path 1: The left most path shows that calls less than 213 seconds and a failed campaign gives a very low chance for the client to subscribe.\
+- Path 2: The Right-Mid path shows that moderate call duration and telephone contact increases the likelihood of success. - Path 3: The Right most path shows that very long calls have a high probability of leading to a successful subscription.\
+
+Overall, the weighted classification tree demonstrated the strongest performance among the tree-based models and will be carried forward into the evaluation phase. It will be compared against the best-performing logistic regression and KNN models to determine which approach is most appropriate for addressing the business problem.\
+
+
+# Modeling
+
+## Fit KNN - Default
+
+```{r}
+knn_Control <- trainControl(method = "cv", number = 10)
+
+KNN_grid <- expand.grid(.k=c(1:10))
+
+set.seed(1)
+
+knn_fit <- train(as.factor(y) ~., data = knn_train, method = "knn", trControl = knn_Control, tuneGrid = KNN_grid)
+knn_fit
+
+
+```
+The chart above shows how many neighboring observations should be used when predicting the class of a new data point. The model evaluated values of k from 1 to 10, and accuracy was used to select the optimal number of neighbors. The highest accuracy occurred at k = 10, meaning that the model will classify each new observation based on the majority class among its 10 closest neighbors.\
+
+
+### Predict KNN - Default
+
+```{r}
+cat("Default KNN Confusion Matrix \n")
+knn_predict <- predict(knn_fit, newdata = knn_test)
+knn_cm  <- confusionMatrix(knn_predict, knn_test$y, positive = "1")
+knn_cm
+
+precision <- unname(knn_cm$byClass['Pos Pred Value'])
+recall <- unname(knn_cm$byClass['Sensitivity'])
+knn_default_f1 <- 2*((precision*recall)/ (precision + recall))
+cat("F1 Score: ", round(knn_default_f1,3) , "\n")
+
+```
+
+Comments on Default KNN:\
+This model was made to be the baseline of the other KNN models which account for class imbalance in the dependent variable. The results highlight the model’s weak predictive power, as the positive class represents a minority of the data. The low sensitivity compared to the high specificity indicates that the model is biased toward predicting the majority class, performing well on non-subscribers but failing to accurately identify true subscribers. This demonstrates the impact of class imbalance on the model’s ability to generalize across both classes.\
+
+## Fit KNN - Oversampling
+
+```{r}
+
+knn_ctrl  <- trainControl(method="cv", number = 10, sampling = "up")
+
+knn_grid <- expand.grid(.k=c(1:10))
+
+set.seed(1)
+
+knn_fits <- train(as.factor(y) ~., data = knn_train, method = "knn", trControl = knn_ctrl, tuneGrid = knn_grid)
+knn_fits
+
+
+```
+Oversampling is a technique used to address class imbalance by increasing the number of observations in the minority class. Since oversampling is being used the amount of neighbors needed to be recalculated to see which one lead to the highest accuracy. In this case the highest accuracy occured at k = 1, meaning that the model will classify each new observation based on the majoirty class among its closest neighbor.\ 
+
+
+### Predict KNN - Oversampling
+
+```{r}
+
+cat("Oversampling KNN Confusion Matrix \n")
+knno_predict <- predict(knn_fits, newdata = knn_test)
+knno_cm <- confusionMatrix(knno_predict, knn_test$y, positive = "1")
+knno_cm
+
+precision <- unname(knno_cm$byClass['Pos Pred Value'])
+recall <- unname(knno_cm$byClass['Sensitivity'])
+knn_sampling_f1 <- 2 * ((precision * recall ) / (precision + recall))
+cat("F1 Score:", round(knn_sampling_f1, 5), "\n")
+
+
+```
+This KNN model although better than the default KNN model still struggles with dependent variable class prediction. Threshold Tuning will now be used to see if a better model can be produced.\
+
+## Fit KNN - Threshold Tuning
+
+### Optimal Threshold
+
+```{r}
+knn_class_prob <- predict(knn_fit, newdata = knn_test, type = 'prob')
+roc_curve <- roc(knn_test$y, knn_class_prob[,2])
+
+# find and report the optimal cut off
+optimal_cutoff <- coords(roc_curve, "best", ret = "threshold")
+cat("OPTIMAL CUTOFF VALUE OF:", optimal_cutoff$threshold,"\n\n")
+
+# rescore using the new optimal cutoff
+knn_class_opt <- ifelse(knn_class_prob[,2] >= optimal_cutoff$threshold, 1, 0)
+
+
+
+```
+Threshold tuning is the process of adjusting the probability cutoff used to classify predictions in a binary classification model. The default cutoff value is 0.5, the optimal cutoff value for this KNN model is 0.04545.\
+
+### Predict Threshold Tuning
+
+```{r}
+cat("KNN Threshold Tuning Confusion Matrix \n")
+knn_tuning_cm <- confusionMatrix(as.factor(knn_class_opt), as.factor(knn_test$y), positive = '1')
+knn_tuning_cm
+
+precision <- unname(knn_tuning_cm$byClass['Pos Pred Value'])
+recall <- unname(knn_tuning_cm$byClass['Sensitivity'])
+knn_threshold_f1 <- 2 * ((precision * recall ) / (precision + recall))
+cat("F1 Score:", round(knn_threshold_f1, 5), "\n")
+
+
+```
+This model is the best KNN model. The threshold-tuned KNN model shows the best overall predictive balance, with the highest balanced accuracy across all KNN models. Although class separation improves substantially, the model still slightly favors predicting non-subscribers over subscribers.\
+
+Overall, the threshold tuning KNN model demonstrated the strongest performance among the KNN models and will be carried forward into the evaluation phase. It will be compared against the best-performing logistic regression and KNN models to determine which approach is most appropriate for addressing the business problem.\
+
+
+# Modeling - Logistic Regression
+
+## Default Logistic Regression
+
+```{r}
+set.seed(1)
+
+lr_ctrl <- trainControl(method = "cv", number = 10)
+
+lr_raw <- train(y ~., data = lr_trainset, method = "glm", family = "binomial", trControl = lr_ctrl)
+summary(lr_raw)
+
+
+m1 <- glm(y ~ pdays_bin, data = Bank_Classification_new, family = binomial)
+m2 <- glm(y ~ previous_bin, data = Bank_Classification_new, family = binomial)
+m3 <- glm(y ~ poutcome, data = Bank_Classification_new, family = binomial)
+AIC(m1, m2, m3)
+
+## Drop the two variables so now there is no multicollinearity problems and variation is captured in the poutcome variable. 
+lr_data <- Bank_Classification_new %>% 
+  select(c(-pdays_bin, -previous_bin))
+View(lr_data)
+
+```
+
+A logistic regression model was initially run using the full dataset with the goal of identifying and removing insignificant variables to reduce noise. During this process, the model produced NA coefficient estimates for pdays_binNot Contacted and previous_binNot Contacted. This occurred because these variables exhibited perfect multicollinearity, meaning they contained identical or near-identical information. Further investigation showed that pdays_binNot Contacted, previous_binNot Contacted, and poutcomeunknown were perfectly aligned, each indicating the same underlying condition: the client had not been contacted previously. To resolve this issue, three separate logistic regression models were made and run each using only one of the three predictors. The models were compared using AIC where lower values indicate better model fit. The variable poutcomeunknown produced the lowest AIC, making it the most informative of the three. Therefore, a revised dataset was made for future logistic regression modeling that excluded the redudant pdays_bin and previous_bin.\
+
+# Data Partition - Refined Logistic Regression
+
+```{r}
+lr_data$y <- as.factor(lr_data$y)
+
+set.seed(1)
+
+full_lr_raw <- train(y ~., data = lr_data, method = "glm", family = "binomial", trControl = lr_ctrl)
+summary(full_lr_raw)
+
+## Drop statistically insignificant variables for refined logistic regression dataset. Can only drop entire variables not parts of variables. Can Only drop Age, education, default, and balance since I can drop the entire variable.
+
+lr_refined_data <- lr_data %>% 
+  select(c(-age, -education, -default, -balance))
+View(lr_refined_data)
+
+```
+After removing the variables affected by multicollinearity, a full logistic regression model was run to identify predictors that were statistically insignificant in explaining the likelihood of subscription. Based on the model output, age, education, default, and balance were the only variables whose coefficients were not statistically significant at the chosen significance level. Because these variables did not meaningfully contribute to predicting the dependent variable, they were removed from the dataset. This resulted in a refined set of predictors consisting only of variables with demonstrated statistical significance, which was then used to develop the final unweighted logistic regression model.\
+
+```{r}
+
+lr_refined_data$y <- as.factor(lr_refined_data$y)
+
+set.seed(1)
+lreg_index <- createDataPartition(lr_refined_data$y, p=0.75, list=FALSE)
+lreg_train <- lr_refined_data[lreg_index, ]
+lreg_test <- lr_refined_data[-lreg_index, ]
+
+cat("Depvar Proportion Trainset \n")
+prop.table(table(lreg_train$y))
+
+cat("\n Depvar Proportion Testset")
+prop.table(table(lreg_test$y))
+
+
+```
+The refined dataset was then partioned into a 75/25 split so the data can be trained and then tested. A set.seed of 1 was also given for reproducibility of the model results. The proportion of the dependent variable was very close between the trainset and testset as well.\
+
+# Modeling - Refined Logistic Regression
+
+```{r}
+set.seed(1)
+
+raw_lr <- train(y~., data = lreg_train, method = "glm", family = "binomial", trControl = lr_ctrl)
+summary(raw_lr)
+
+```
+An unweighted logistic regression model was run on the refined dataset.\
+
+```{r}
+
+## Variables are not multicollinear
+car::vif(raw_lr$finalModel)
+
+```
+Predictors were again checked for multicollinearity and there was none.\
+
+
+```{r}
+
+caret::varImp(raw_lr$finalModel) 
+
+```
+
+Variable Importance was also checked from the logistic regression model. Duration, poutcomesuccess, and contactunkown had the highest variable importance.\
+
+
+## Predict - Refined Logistic Regression
+
+```{r}
+
+lr_predict <- predict(raw_lr, newdata=lreg_test, type = "raw")
+CM_lr <- confusionMatrix(lr_predict, as.factor(lreg_test$y), positive = "1")
+CM_lr
+
+precision <- unname(CM_lr$byClass['Pos Pred Value'])
+recall <- unname(CM_lr$byClass['Sensitivity'])
+f1_lr <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_lr, "\n")
+
+
+```
+
+Comments on Refined Logistic Regression Model:\
+This model was made to be the baseline of the the upcoming weighted logistic Regression model which accounts for class imbalance in the dependent variable. The results highlight the model’s weak predictive power, as the positive class represents a minority of the data. The low sensitivity compared to the high specificity indicates that the model is biased toward predicting the majority class, performing well on non-subscribers but failing to accurately identify true subscribers. This demonstrates the impact of class imbalance on the model’s ability to generalize across both classes.\
+
+# Modeling - Weighted Logistic Regression
+## Create Weights
+
+```{r}
+class_counts_lr <- table(lreg_train$y)
+lr_wts <- ifelse(lreg_train$y == 1,
+              (1 / class_counts[2]) * 0.5 * sum(class_counts),
+              (1 / class_counts[1]) * 0.5 * sum(class_counts))
+
+
+```
+To address the imbalance in the dependent variable, class weights were created based on the inverse frequency of each class in the training dataset. This weighting scheme ensures that the minority class receives proportionally greater influence during model training, preventing the logistic regression model from being biased toward the majority class.\
+
+## Create Model
+
+```{r}
+
+set.seed(1)
+
+wlr_ctrl <- trainControl(method = "cv", number = 10)
+
+wlr_model <- train(y~., data = lreg_train, method = "glm", family = "binomial", trControl = wlr_ctrl, weights = lr_wts)
+
+## What Variables are significant
+summary(wlr_model$finalModel)
+
+```
+
+Comments on Weighted Logistic Regression:\
+This model takes into account the dependent variable class imbalance by using weighting. This model shows that jobretired, loanyes, contactunknown, monthmar, monthmay, monthnov, monthsep, duration, campaign, poutcomesuccess, jobself-employed, maritalmarried, monthjul are statistically significant to the dependent variable.\
+
+### Assess weighted Logistic Regression Model
+
+#### Model Validity and Coefficient evaluation
+
+```{r}
+## Read what variable coefficients Mean, special interpretation associated with it.
+table <- tibble(
+  predictors = names(coef(wlr_model$finalModel)),
+  odds_ratio = exp(coef(wlr_model$finalModel)),
+  p_value    = round(summary(wlr_model$finalModel)$coefficients[, "Pr(>|z|)"], 4)) %>% 
+  arrange(desc(odds_ratio))
+knitr::kable(table, caption = "Baseline Logistic Regression Measures")
+
+```
+Variable coefficients were also found and I will list the top 5 most influential predictors based on their coefficient value.\
+- poutcomesuccess (odds ratio = 13.78, p \< 0.001): Clients with a previous campaign success are 13.8 times more likely to subscribe again compared to the reference group.\
+- monthoct (odds ratio = 5.44, p \< 0.001): Contacts made in October are associated with 5.4× higher odds of a client subscribing. Suggests that October campaigns perform especially well.\
+- Duration (odds ratio = 1.006, p \< 0.001): For each additional unit increase in call duration (seconds), the odds of subscription increase by about 0.6%. Longer conversations are linked to higher likelihoods of success.\
+- monthsep (odds ratio = 2.32, p = 0.047): Contacts made in September are about 2.3× more likely to result in a subscription.\
+- jobretired (odds ratio = 1.69, p = 0.026): Retired clients are about 1.7× more likely to subscribe.\
+
+#### Global likelihood Ratio Test
+
+```{r}
+# Full model (with weights)
+w_logit_full <- glm(
+  y ~ .,
+  family = binomial(link = "logit"),
+  data = lreg_train,
+  weights = lr_wts
+)
+
+# Null model (with weights)
+w_logit_null <- glm(
+  y ~ 1,
+  family = binomial(link = "logit"),
+  data = lreg_train,
+  weights = lr_wts
+)
+
+anova(w_logit_null, w_logit_full, test = "LRT")
+
+```
+
+Comments on LRT:\
+The LRT shows that the model as a whole has predictive value and the full regression model provides statistically significant improvement in fit than a null model with no predictors.\
+
+#### Model Fit Metrics
+
+```{r}
+table1 <- table(
+  McFadden = formattable::comma(PseudoR2(w_logit_full, "McFadden"), digits = 3),
+  Nagel = formattable::comma(PseudoR2(w_logit_full, "Nagel"),
+                            digits = 3)
+)
+table1
+
+
+```
+
+Comments on Goodness of Measures Fit:\
+The McFadden value is 0.402 which shows the logistic regression model is an excellent fit compared to a null model. The Nagelkerke variable is 0.625, this value is an adjusted version of the McFadden measure. A value of 0.625 suggests the model accounts for 62.5% of the variation in the outcome.\
+
+## Predict - Weighted Logstic Regression Model
+
+```{r}
+wlr_predict <- predict(wlr_model, newdata = lreg_test, type="raw")
+CM_wlr <- confusionMatrix(wlr_predict, as.factor(lreg_test$y), positive = "1")
+CM_wlr
+
+precision <- unname(CM_wlr$byClass['Pos Pred Value'])
+recall <- unname(CM_wlr$byClass['Sensitivity'])
+f1_wlr <- 2 * ((precision * recall) / (precision + recall))
+cat("F1 Score: ", f1_wlr, "\n")
+
+```
+
+Comments on Predicting Weighted Logistic Regression Model:\
+This Weighted Logistic Regression Model is by far better than the raw logistic regression model. This Model's Balanced Accuracy and F1 score is higher than the default model. This model also shows good predictive power for determining between dependent variable classes with both sensitivity and specificity being higher values and close together.\
+
+Overall, the Weighted Logistic Regression model demonstrated the strongest performance among the logistic regression models and will be carried forward into the evaluation phase. It will be compared against the best-performing classification tree and KNN model to determine which approach is most appropriate for addressing the business problem.\
+
+## Summary of Modeling
+The Modeling phase involved developing and tuning three classification models - classification trees, KNN, and logistic regression. These models were made to predict whether a client will subscribe to a term deposit. Two classification trees were made, unweighted and weighted, and were evaluated against the same metrics. The weighted classification tree proved to be the superior model. For KNN three types of KNN were made, unweighted, oversampling, and threshold tuning. These KNN models were evaluated all using the same metrics and the threshold tuning KNN model proved to be the superior model. Two types of Logistic regression models were made, unweighed and weighted, and were evaluated using the same metrics. The weighted logistic regression model proved to be the superior model. In the evaluation phase the weighted classification tree, threshold tuned KNN model, and weighted logistic regression model will be compared and evaluated to see which model is best suited for answering the business problem.\
+
+
+# Evaluation
+
+## Compare Best Classification Models
+
+```{r}
+extract_metrics <- function(cm, f1) {
+  c(Accuracy = unname(cm$overall["Accuracy"]),
+    Kappa              = unname(cm$overall["Kappa"]),
+    Sensitivity        = unname(cm$byClass["Sensitivity"]),
+    Specificity        = unname(cm$byClass["Specificity"]),
+    `Pos Pred Value`   = unname(cm$byClass["Pos Pred Value"]),
+    Prevalence         = unname(cm$byClass["Prevalence"]),
+    `Detection Rate`   = unname(cm$byClass["Detection Rate"]),
+    `Balanced Accuracy`= unname(cm$byClass["Balanced Accuracy"]),
+    F1                 = f1)
+}
+
+metrics_table <- data.frame(
+  Weighted_Classification_tree = extract_metrics(tree_cm, tree_f1),
+  Knn_Threshold = extract_metrics(knn_tuning_cm, knn_threshold_f1),
+  LR_Weighted = extract_metrics(CM_wlr, f1_wlr)
+)
+
+metrics_table <- tibble::rownames_to_column(metrics_table, var = "Metric")
+knitr::kable(metrics_table, digits = 3, caption = "Model Performance Comparsion")
+
+
+```
+
+## Best Model
+
+Comments on the Best Model:\
+Based on the best models presented, Weighted Logistic Regression is the best model. The Weighted Logistic Regression model has the highest balanced accuracy, meaning the model correctly identifies both classes of the dependent variable better than the other models. The model has strong sensitivity and specificity supporting the model has good predictive power of dependent variable classes despite the imbalanced dependent variable. The Weighted Logistic Regression model has the highest F1 score among models which shows it is the best at identifying the minority class and minimizing false positives. Although this logistic weighted regression model has slightly lower accuracy then the KNN threshold model, it is a minimal difference and this logistic regression model has significantly better class detection. The Logistic Regression Model will be the model used to deploy and answer the busines problem.\
+
+### Model Evaluation Charts
+
+#### Gains Table
+
+```{r}
+
+lreg_test$y <- as.numeric(lreg_test$y)
+
+predicted_prob <- predict(wlr_model, lreg_test, type="prob")
+
+gains_table <- gains(lreg_test$y, predicted_prob[,2])
+gains_table
+
+```
+
+### Cumulative Lift Chart
+
+```{r}
+plot(c(0, gains_table$cume.pct.of.total*sum(lreg_test$y)) ~ c(0, gains_table$cume.obs), xlab = '# of cases', ylab = "Cumulative", type = "l", main="Cumulative Gains Chart")
+lines(c(0, sum(lreg_test$y))~c(0, dim(lreg_test)[1]), col="red", lty=2)
+
+```
+
+#### Decile Wise Lift Chart
+
+```{r}
+barplot(gains_table$mean.resp/mean(lreg_test$y), names.arg=gains_table$depth, 
+        xlab="Percentile", ylab="Gains", ylim=c(0,3), 
+				col="blue", main="Decile-Wise Lift Chart")
+abline(h=c(1),col="red")
+
+```
+
+#### ROC Curve With AUC Value
+
+```{r}
+#ROC with AUC
+roc_object <- roc(lreg_test$y, predicted_prob[,2])
+plot.roc(roc_object)
+auc(roc_object)
+
+
+```
+
+Comments on Model Evaluation Charts:\
+Based on these evaluation charts, the model demonstrates strong predictive performance. The cumulative lift chart shows that the model performs better than random chance, as indicated by the black curve lying above the red diagonal line. The cumulative gains chart reveals that the top 30% of the dataset captures a large proportion of positive cases, supported by the high mean model score and cumulative lift values. For example, the first decile has a mean model score of 0.95 and a cumulative lift of 136, meaning the model is 36% more effective than random selection at identifying positives. The decile-wise lift chart confirms that the first three deciles outperform random chance, while the ROC curve, with an AUC value of 0.901, indicates excellent overall discrimination between the positive and negative classes.\
+
+#### Dalex Graph
+
+```{r}
+## Code made using AI assistance; ChatGPT
+
+
+## --- 1) Build X_test with the SAME columns the model saw during training
+train_cols <- setdiff(colnames(wlr_model$trainingData), ".outcome")
+X_test <- lreg_test %>% dplyr::select(all_of(train_cols)) %>% as.data.frame()
+
+## --- 2) Numeric y (0/1) that matches the positive class used by caret
+pos_class <- levels(wlr_model$trainingData$.outcome)[2]   # caret’s positive class
+y_test <- ifelse(lreg_test$y == pos_class, 1, 0)
+
+## --- 3) Predict function: return P(positive class)
+pfun <- function(m, newdata) {
+  probs <- predict(m, newdata, type = "prob")
+  probs[, pos_class]   # e.g. "yes" rather than "1"
+}
+
+## --- 4) Create explainer
+explainer_lr <- DALEX::explain(
+  model = wlr_model,
+  data  = X_test,
+  y     = y_test,
+  predict_function = pfun,
+  label = "Weighted LR"
+)
+
+## --- 5) Global feature importance (permutation-based)
+mparts <- model_parts(explainer_lr, type = "difference", B = 50)
+pFP <- plot(mparts, show_boxplots = FALSE) +
+  ggtitle("Weighted LR – Permutation Feature Importance")
+
+## --- 6) Model performance & residuals
+mp <- model_performance(explainer_lr)     # AUC, ACC, etc.; for classification, plot shows ROC/Lift
+pPerf <- plot(mp) + ggtitle("Weighted LR – Performance (ROC/Lift)")
+
+md <- model_diagnostics(explainer_lr)
+pResid <- plot(md, variable = "y", yvariable = "residuals", smooth = FALSE) +
+  ggtitle("Weighted LR – Residual Diagnostics")
+
+## --- 7) Arrange plots
+gridExtra::grid.arrange(pFP, pPerf, pResid, nrow = 1)
+
+
+```
+
+Comments on the Dalex Graph:\
+The Dalex graph shows that duration is the dominant predictor in the weighted logistic regression model along with month, poutcome, and contact. The ROC style performance curve confirms strong discriminatory ability. The residual plot shows there is no pattern or systematic bias.\
+
+## Summary of Evaluation
+In the evaluation phase, the best-performing models from each modeling technique - weighted logistic regression, weighted classification tree, and KNN with threshold tuning - were compared using a set of metrics. Across the accuracy, error-based, and class imbalance sensitive metrics, weighted logistic regression consistently performed the best. Due to this weighted logistic regression was chosen to answer the business problem and will be used to help answer the two research questions. The evaluation charts further support these findings the cumulative gains and lift charts showed that the model identified positive cases far more effectively than random selection, with the top deciles capturing disproportionately high numbers of true positives. The ROC curve, with an AUC of 0.901, confirmed excellent discriminatory ability. The Dalex graph also showed information about the logistic regression supporting the logistic regression model had strong discriminatory ability and no systematic bias.\
+
+The Deployment phase will conclude the findings of this analysis and report in context of the business problem and research questions.\
+
+
+# Deployment
+
+## Answer to the Business Problem
+The business problem guiding this analysis was to determine which clients are most likely to subscribe to a term deposit. Based on the full modeling and evaluation process, the weighted logistic regression model emerges as the most effective tool for this purpose. A model is only valuable if it performs meaningfully better than random chance, and the weighted logistic regression model meets this requirement with a balanced accuracy of 83.6%, reflecting strong performance across both outcome classes. A major concern in this project was the significant class imbalance in the dependent variable, where “no” responses greatly outnumbered “yes” responses. The weighted logistic regression model successfully mitigates this challenge, as evidenced by its high and closely aligned sensitivity and specificity values. This indicates that the model accurately identifies clients who are likely to subscribe while avoiding excessive misclassification of either class. The weighted logistic regression model is a reliable and practical solution for helping the bank target clients most likely to open a term deposit.\
+
+
+## Answers to the Research Questions
+
+1.  What variables are most significant to people that will subscribe to a term deposit?\
+
+The Weighted Logistic Regression model shows which variables are most significant to people that subscribe to a term deposit. These Variables include:\
+
+-   Duration: For each additional unit increase in call duration (seconds), the odds of subscription increase by about 0.6%. Longer conversations are linked to higher likelihoods of success.\
+-   poutcomesuccesss: Clients with a previous campaign success are 13.8 times more likely to subscribe again compared to the reference group.\
+-   jobretired: Retired clients are about 1.7× more likely to subscribe.\
+
+2.  Are their certain times of the year where people are more likely to subscribe to a term deposit?\
+
+Yes, the weighted logistic model shows that there are certain times of the year people are more likely to subscribe to a term deposit. The two months that have the highest probability of clients subscribing are October and September. Contacts made in October are associated with 5.4× higher odds of a client subscribing. Suggests that October campaigns perfOctorm especially well. Contacts made in September are about 2.3× more likely to result in a subscription.\
+
+## Business Recommendations
+I have three recommendations that I would make based off this analysis. The first is to prioritize outreach during the high-conversion months of October and September. The second would be to target customer segments with higher likelihood of subscription, these include targeting clients that have had successful campaign outcomes in the past and retired clients. The third recommendation would be to increase engagement quality by extending call durations. Call duration was the strongest predictor in the weighted logistic regression model so call duration should be a priority.\
+
+## Summary of Report
+This analysis successfully identified the key factors that influence whether a client will subscribe to a term deposit and established a reliable, data-driven model to support targeted marketing efforts. By evaluating multiple classification techniques and accounting for the challenges of imbalanced data, the weighted logistic regression model emerged as the most effective and practical solution. Its strong predictive performance and interpretability make it well-suited for real-world application, enabling the bank to better allocate resources, refine outreach strategies, and improve conversion outcomes. With these insights and recommendations, the organization is now better equipped to engage the right clients at the right time, ultimately strengthening campaign effectiveness and driving higher subscription rates.\
+
+
+# References
+
+## Citation of orignial data source with authors
+Moro, S., Cortez, P., & Rita, P. (2012). Bank Marketing [Dataset]. UCI Machine Learning Repository. https://archive.ics.uci.edu/dataset/222/bank+marketing \
+
+## Citation of ChatGPT
+OpenAI. (2025). ChatGPT (Version 5.1) [Large language model]. https://chat.openai.com/ \
+
+
+## Version of R
+```{r}
+
+one <- print(citation(), style = "textVersion")
+cite.version <- R.Version()
+pip <- as.character(cite.version$version.string)
+cat("Version", pip, "\n")
+cat("  \n")
+
+```
+
+
+## R packages used during analysis
+
+```{r}
+
+print(citation("car"), style = "textVersion")
+cat("  \n")
+print(citation("caret"), style = "textVersion")
+cat("  \n")
+print(citation("DALEX"), style = "textVersion")
+cat("  \n")
+print(citation("DataExplorer"), style = "textVersion")
+cat("  \n")
+print(citation("DescTools"), style = "textVersion")
+cat("  \n")
+print(citation("dlookr"), style = "textVersion")
+cat("  \n")
+print(citation("dplyr"), style = "textVersion")
+cat("  \n")
+print(citation("e1071"), style = "textVersion")
+cat("  \n")
+print(citation("flextable"), style = "textVersion")
+cat("  \n")
+print(citation("forcats"), style = "textVersion")
+cat("  \n")
+print(citation("formattable"), style = "textVersion")
+cat("  \n")
+print(citation("gains"), style = "textVersion")
+cat("  \n")
+print(citation("ggplot2"), style = "textVersion")
+cat("  \n")
+print(citation("GGally"), style = "textVersion")
+cat("  \n")
+print(citation("gridExtra"), style = "textVersion")
+cat("  \n")
+print(citation("janitor"), style = "textVersion")
+cat("  \n")
+print(citation("knitr"), style = "textVersion")
+cat("  \n")
+print(citation("lattice"), style = "textVersion")
+cat("  \n")
+print(citation("lubridate"), style = "textVersion")
+cat("  \n")
+print(citation("moments"), style = "textVersion")
+cat("  \n")
+print(citation("pROC"), style = "textVersion")
+cat("  \n")
+print(citation("psych"), style = "textVersion")
+cat("  \n")
+print(citation("purrr"), style = "textVersion")
+cat("  \n")
+print(citation("readr"), style = "textVersion")
+cat("  \n")
+print(citation("readxl"), style = "textVersion")
+cat("  \n")
+print(citation("rpart"), style = "textVersion")
+cat("  \n")
+print(citation("rpart.plot"), style = "textVersion")
+cat("  \n")
+print(citation("SmartEDA"), style = "textVersion")
+cat("  \n")
+print(citation("stringr"), style = "textVersion")
+cat("  \n")
+print(citation("tibble"), style = "textVersion")
+cat("  \n")
+print(citation("tidyr"), style = "textVersion")
+cat("  \n")
+print(citation("tidyverse"), style = "textVersion")
+cat("  \n")
+
+
+```
+
+# End of Report
