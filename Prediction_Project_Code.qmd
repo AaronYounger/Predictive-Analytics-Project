@@ -1,0 +1,1218 @@
+---
+title: "Prediction Report"
+author: "Aaron Younger"
+date: "December 10, 2025"
+format:
+  html: 
+    code-fold: false
+    code-overflow: wrap
+execute:
+  warning: false
+  message: false
+  echo: false
+  include: true
+  error: false
+toc: true
+editor: source
+---
+
+
+
+
+# Business Understanding
+
+## Business Problem
+The data used in this analysis regard the performance in two distinct schools, mathematics and Portuguese. The primary goal of this analysis is to build prediction models that can predict the final score of a student using different variables. The ability for schools to be able to predict a students final grade can be highly valuable for several reasons. Schools can identify students early on that are most likely struggling. If educators understand which factors most influence final grades they can modify teaching strategies and course material.Predictive Models can also help schools in resource allocation giving them direction where to spend money.\
+
+Based on this information, the **business problem** is to determine whether a student’s final grade can be accurately predicted using a set of explanatory variables.\
+
+
+
+## Two Research Questions
+
+Along with the business problem, this report explores two research questions:\
+
+1. Which of the two schools has a higher average G3 score, and is school membership a significant predictor in the regression model?\
+
+2. Does parental education level influence students’ academic performance, as reflected in their G3 scores?\
+
+Now  that the business problem and research questions have been clearly defined, the next step in this report is exploring the data to better understand its structure, key variables, and potential patterns relevant to students final grade. This **Data Understanding** phase provides the foundational insight needed for effective data preparation for modeling.\
+
+
+# Data Understanding
+
+```{r}
+options(scipen=999)
+suppressWarnings(RNGversion("3.5.3"))
+
+```
+
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(DataExplorer)
+library(dlookr)
+library(psych)
+library(tidyr)
+library(e1071)
+library(randomForest)
+library(glmnet)
+library(stringr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(pdp)
+library(car)
+library(Metrics)
+library(auditor)
+
+```
+
+```{r}
+Prediction_Scores <- readxl::read_excel("Prediction_Scores.xlsx")
+head(Prediction_Scores)
+
+```
+Data Set Variable Key:\
+
+**Categorical Variables:**\
+
+1 School – student's school (binary: 'GP' - Gabriel Pereira or 'MS' - Mousinho da Silveira).\
+2 Sex – student's sex (binary: 'F' - female or 'M' - male).\
+3 Address – student's home address type (binary: 'U' - urban or 'R' - rural).\
+4 Famsize – family size (binary: 'LE3' - less or equal to 3 or 'GT3' - greater than 3).\
+5 Pstatus – parent's cohabitation status (binary: 'T' - living together or 'A' - apart).\
+6 Mjob – mother's job (nominal: 'teacher', 'health' care related, civil 'services' (e.g. administrative or police), 'at_home', or 'other').\
+7 Fjob – father's job (nominal: 'teacher', 'health' care related, civil 'services' (e.g. administrative or police), 'at_home', or 'other').\
+8 Reason – reason to choose this school (nominal: close to 'home', school 'reputation', 'course' preference, or 'other').\
+9 Guardian – student's guardian (nominal: 'mother', 'father', or 'other').\
+10 Schoolsup – extra educational support (binary: yes or no).\
+11 Famsup – family educational support (binary: yes or no).\
+12 Paid – extra paid classes within the course subject (Math or Portuguese) (binary: yes or no).\
+13 activities – extra-curricular activities (binary: yes or no).\
+14 nursery – attended nursery school (binary: yes or no).\
+15 higher – wants to take higher education (binary: yes or no).\
+16 internet – Internet access at home (binary: yes or no).\
+17 romantic – with a romantic relationship (binary: yes or no).\
+
+**Numerical Variables:**\
+
+18 Age – student's age (numeric: from 15 to 22).\
+19 Medu – mother's education (numeric: 0 - none, 1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education, 4 - higher education).\
+20 Fedu – father's education (numeric: 0 - none, 1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education, 4 - higher education).\
+21 Traveltime – home to school travel time (numeric: 1 - <15 min., 2 - 15 to 30 min., 3 - 30 min. to 1 hour, 4 - >1 hour).\
+22 Studytime – weekly study time (numeric: 1 - <2 hours, 2 - 2 to 5 hours, 3 - 5 to 10 hours, 4 - >10 hours).\
+23 Failures – number of past class failures (numeric: n if 1 ≤ n < 3, else 4).\
+24 Famrel – quality of family relationships (numeric: from 1 - very bad to 5 - excellent).\
+25 Freetime – free time after school (numeric: from 1 - very low to 5 - very high).\
+26 Goout – going out with friends (numeric: from 1 - very low to 5 - very high).\
+27 Dalc – workday alcohol consumption (numeric: from 1 - very low to 5 - very high).\
+28 Walc – weekend alcohol consumption (numeric: from 1 - very low to 5 - very high).\
+29 Health – current health status (numeric: from 1 - very bad to 5 - very good).\
+30 Absences – number of school absences (numeric: from 0 to 93).\
+
+These grades are related with the course subject, Math or Portuguese:\
+
+31 G1 – first period grade (numeric: from 0 to 20).\
+32 G2 – second period grade (numeric: from 0 to 20).\
+33 G3 (Dependent Variable) – final grade (numeric: from 0 to 20, output target).\
+
+## Dataset Exploration
+
+### Number of Rows and Columns
+
+```{r}
+table_info <- tibble(
+  Statistic = c("Number of Columns", "Number of Rows"),
+  Value = c(ncol(Prediction_Scores), nrow(Prediction_Scores))
+)
+
+table_info
+
+```
+This dataset contains 33 variables, as indicated by the number of columns, and 649 observations, as indicated by the number of rows.\
+
+
+### Data Structure and Completeness Overview
+
+```{r}
+Prediction_Scores %>% plot_intro()
+```
+
+This graph shows that 17 variables are categorical variables and the remaining 16 variables are numeric. This dataset also contains no missing values.\
+
+
+## Numeric EDA
+Since the dataset contains both categorical and numerical variables, the exploratory data analysis (EDA) will be conducted in two parts: one focusing on categorical variables and the other on numeric variables. First, this analysis will explore the relationships and patterns found in numeric variables.\
+
+
+### Make Data set of all Numeric Variables
+
+```{r}
+prediction_scores.n <- Prediction_Scores %>% 
+  select(where(is.numeric))
+head(prediction_scores.n)
+
+```
+A subset containing only the numeric variables was created from the original dataset to perform numeric specific EDA.\
+
+### Variables on a Scale
+
+```{r}
+# List the variables that are on a scale (e.g., 1–5)
+scale_vars <- c("Medu", "Fedu", "studytime", "failures", "famrel",
+                "freetime", "goout", "Dalc", "Walc", "health", "traveltime")
+
+# Reshape to long format
+df_long <- prediction_scores.n %>%
+  pivot_longer(cols = all_of(scale_vars), names_to = "variable", values_to = "value")
+
+# Plot bar charts of counts
+ggplot(df_long, aes(x = factor(value))) +
+  geom_bar(fill = "steelblue") +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(title = "Count of Observations for Scale Variables (1–5)",
+       x = "Scale Value", y = "Count") +
+  theme_minimal()
+
+
+
+```
+Some of the numerical variables were recorded using a scale. To investigate the distribution of observations per scale amount (0-5), column charts were created to display the frequency of observations within each level. This was to help identify if there was any level imbalance within variables.\
+
+The column charts indicated that all scaled variables exhibited considerable level imbalance and highlighted where scale levels could be merged. All eleven scale-based numeric variables were recoded into either binary or multi-level categorical variables to produce a more balanced distribution of observations.\
+
+
+### Merge levels to Make Balanced predictors
+
+```{r}
+
+## Transform Variables and turn them into factors
+Prediction_Scores_new <- Prediction_Scores %>%
+  mutate(
+    failures = factor(ifelse(failures > 0, "Failed", "Not Failed")),
+    Dalc = factor(ifelse(Dalc > 1, ">1", "1")),
+    Medu = factor(ifelse(Medu > 2, "High Education", "Low Education")),
+    Fedu = factor(ifelse(Fedu > 2, "High Education", "Low Education")),
+
+    freetime = factor(case_when(
+      freetime <= 2 ~ "Low",
+      freetime == 3 ~ "Medium",
+      freetime >= 4 ~ "High"
+    ), levels = c("Low", "Medium", "High")),
+
+    goout = factor(case_when(
+      goout <= 2 ~ "Low",
+      goout == 3 ~ "Medium",
+      goout >= 4 ~ "High"
+    ), levels = c("Low", "Medium", "High")),
+
+    health = factor(case_when(
+      health <= 2 ~ "Low",
+      health <= 4 ~ "Medium",
+      health == 5 ~ "High"
+    ), levels = c("Low", "Medium", "High")),
+
+    studytime = factor(case_when(
+      studytime == 1 ~ "< 2 Hours",
+      studytime == 2 ~ "2–5 Hours",
+      studytime >= 3 ~ ">5 Hours"
+    ), levels = c("< 2 Hours", "2–5 Hours", ">5 Hours")),
+
+    traveltime = factor(case_when(
+      traveltime == 1 ~ "<15 min",
+      traveltime == 2 ~ "15–30 min",
+      traveltime >= 3 ~ ">30 min"
+    ), levels = c("<15 min", "15–30 min", ">30 min")),
+
+    Walc = factor(case_when(
+      Walc == 1 ~ "Low",
+      Walc <= 3 ~ "Medium",
+      Walc >= 4 ~ "High"
+    ), levels = c("Low", "Medium", "High")),
+    
+    famrel = factor(ifelse(famrel <= 3, "Bad", "Good"))
+)
+
+head(Prediction_Scores_new)
+
+
+
+```
+The reason for transforming these variables from numeric scales to categories is to produce better level balance. Creating level balance makes sure there is sufficient observation counts within all levels. Creating a more balanced observation count across levels within a variable will help improve model stability and reliability. Models that will be used in this project such as linear regression and decision trees rely on having adequate observation counts for each category. If one level has to little observations, the model cannot reliably estimate its effect.The transformations for these numeric variables included either binary or multi-leveled category transformations. Each variable that was recoded is detailed below, including the original scale values and the method used to collapse those values into the new categorical groupings.\
+
+- Failures (classes failed) was converted into a binary factor with two levels: "Failed" for students who had one or more past class failures, and "Not Failed" for those with no past failures. Before transformation, the variable ranged from 0 to 3, with the majority of observations concentrated at 0. Collapsing the scale into two categories increased the number of observations in the “Failed” group and reduced the degree of class imbalance. However, the “Not Failed” category still remains the dominant group, so some imbalance persists but less than before.\
+
+- Dalc (workday alcohol consumption) was converted into a binary factor with two levels: "1" for the lowest level of consumption and ">1" for any consumption greater than 1. Prior to transformation, the variable ranged from 1-5, with most of the observations in 1. Collapsing these categories helped increase the number of observations in the ">1" alcohol consumption category, reducing class imbalance.\
+
+- Medu (Mother's Education) was converted into a binary factor with two levels: "Low Education" which represented mothers with a primary or lower education and "High Education" which represents mothers with a secondary education or higher. Prior to transformation this variable ranged from 0-4. This variable's zero value had very small observations, so to mitigate that 0 was combined with 1-2. The new binary values of "Low Education" and "High Education" are very close in observation count meaning this variable now has good class balance.\
+
+- Fedu (Father's Education) was converted into a binary factor with two levels: "Low Education" which represented Fathers with a primary or lower education and "High Education" which represents fathers with a secondary education or higher. Prior to transformation this variable ranged from 0-4. This variable's zero value had very small observations, so to mitigate that 0 was combined with 1-2. The new binary values of "Low Education" and "High Education" are very close in observation count meaning this variable now has good class balance. "Low Education" has more observation counts than "High Education" however each class has an adequate amount of observations which prepares this variable for modeling.\
+
+- Freetime (free time after school) was converted into multiple categories: "Low" for <=2, "Medium" for = 3, and "High" for responses >= 4. Prior to transformation this variable ranged from 1-5, this transformation combined ranks 1-2 and 4-5 to have closer observation counts to rank 3 which had the majority of observations. After transformation "Medium" and "High" have very similar observation counts with "Low" being the minority category. This variable now has an adequate amount of observations in each category for modeling.\
+
+- Gouut (going out with Friends) was converted into multiple categories: "Low" for <=2, "Medium" for = 3, and "High" for responses >= 4. Prior to transformation this variable ranged from 1-5, this transformation was to combine ranks 1-2 and 4-5 to have closer observation counts to rank 3 which had the majority of observations. After transformation, this variable has class balance with "High" having slightly higher observation counts than "Low" and "Medium". This variable now has good class balance.\
+
+- Health (Current Health Status) was converted into multiple categories: "Low" for ranks <= 2, "Medium" for ranks between 3 and 4, and "High" for rank = to 5. Prior to transformation this variable ranged from 1-5 with 5 being the majority class. This transformation helped bring class balance by combining ranks 1-2 and 3-4 producing similar observation counts that rank 5 has.\
+
+- Studytime (weekly study time) was converted into multiple categories: "<2 Hours" for rank = 1, "2-5 Hours" for rank = 2, and ">5 Hours" for ranks  3 and 4. Prior to transformation this variable ranged from 1-4 with 2 being the majority class. This transformation was intended to combine ranks 3-4 to produce higher observation counts. Although there is still some class imbalance between categories there are now an adequate amount of observations in each category for modeling.\
+
+- Traveltime (home-to-school travel time) was converted into multiple categories: "<15 min" for rank = 1, "15–30 min" for rank = 2, and ">30 min" for ranks = 3-4. This transformation was intended to combine ranks 3 and 4 giving them higher observation counts. There is still class imbalance as ">30 min" has lower observations than the other two categories, however this transformation brings better class balance than before.\
+
+- Walc (Weekend Alcohol Consumption) was converted into multiple categories: "Low" for rank = 1, "Medium" for ranks 2-3, and "High" for ranks >= 4. Prior to this transformation this variable ranged from 1-5 with 1 being the majority class. This transformation was to give more observation counts to ranks 2-3 and ranks 4-5 to help even observation counts across categories. After transformation there is still some class imbalance as "High" has lower observation counts than "low" and "Medium" however after transformation there is better class balance than before.\
+
+- Famrel (Family Relationhsip Quality) was converted into a binary: "Good" for scores above rank 3, "Bad" for scores below rank 3. Prior to transformation this variable ranged from 1-5. After transformation there is still some class imbalance as "Good" has significantly more observations than "Bad". However, there is an adequate amount of observations in both classes to be represented well in modeling.\ 
+
+**Factor Conversion**\
+After each variable was transformed using categories, they were converted from numeric variables to factors as the variables did not imply mathematical distances and allows the model to estimate separate effects for each category.\
+
+
+### Remove New Factor Variables from Numeric Only Dataset
+
+```{r}
+prediction_scores.n <- prediction_scores.n %>% 
+  select(-c(failures, Dalc, Medu, Fedu, freetime, goout, health, studytime, traveltime, Walc, famrel))
+head(prediction_scores.n)
+
+```
+Since the numeric variables on a scale were grouped and changed to factors that left only five numeric variables left, age, absences, G1, G2, and G3.\
+
+### Distribution of Numeric Variables
+
+```{r}
+prediction_scores.n %>% plot_density()
+
+
+```
+The distribution of the five numeric variables were checked using a density plot. G1, G2, and G3 had relatively normal distribution with slight left skewness, this is due to some of the scores in these variables being zero. Age shows slight right skewness. Absences shows more extreme right skewness that will need to be explored.\
+
+
+### Outliers
+
+```{r}
+diagnose_outlier(prediction_scores.n)
+```
+Although all variables contain outliers, they do not pose a significant concern for this analysis. For the absences variable, the mean increases when outliers are included, indicating that extreme values are pulling the distribution to the right and contributing to its right skewness. In contrast, G1, G2, and G3 show lower means when outliers are included, consistent with their left-skewed distributions, where zero scores pull the data toward the lower end. Outliers will futher be explored and possibly removed in the data preperation phase.\
+
+
+### Boxplots
+
+```{r}
+prediction_scores.n %>% plot_boxplot(by="G3")
+```
+
+
+### Scatterplots
+
+```{r}
+
+prediction_scores.n %>% plot_scatterplot(by="G3") # G1 and G2 have a positive linear relationship with G3, mention its clear and the absence will be looked into with another graph
+
+```
+Comments on Scatterplots:\
+Based off the scatterplots, G1 and G2 have a positive linear relationship with G3. From the scatterplot it does not seem like absence has a relationship to G3, however due to uncertainty a more advanced scatterplot will be graphed comparing absence to G3 to see if there is a relationship.\
+
+
+#### Explore Variable Relationship with Depvar
+
+```{r}
+ggplot(data = prediction_scores.n, aes(x = absences, y = G3))+
+  geom_point(color = "blue")+
+  geom_smooth(method = "lm", color = "red", se = FALSE)+
+  labs(
+    title = "Relationship Between Absence and G3",
+    x = "Absences",
+    y = "G3"
+  ) +
+  theme_minimal() ## See a downward trend, as absences increase, final grade decreases.
+
+
+```
+Comments on Absence and G3:\
+Based off this scatterplot Absence and G3 have a slight negative relationship which makes sense, which aligns with the expectation that students with more absences tend to have lower final grades. However, the relationship is very weak and can be considered close to neutral.\
+
+
+### Correlation Numeric Variables
+
+```{r}
+prediction_scores.n %>% DataExplorer::plot_correlation() ## G1 and G2 has Super Strong correlation to G3
+
+
+
+
+```
+Comments on Correlation Matrix:\
+All variables show weak correlation to the dependent variable except for G1 and G2 who have very strong positive correlation to the Dependent Variable, G3. Since both of these variables have high correlation with the dependent variable, there is a potential for multicollinearity among G1 and G2 variables. Note that Absences have a weak negative correlation with G3 which supports the findings in the scatterplot above.\
+
+
+### Mean of Depvar G3
+
+```{r}
+cat("Mean of G3 \n")
+mean(Prediction_Scores_new$G3)
+
+```
+The mean of G3 will be calculated for both the training and test sets and compared to the mean of G3 in the full dataset. This comparison will help determine whether the train–test split is representative of the overall data and free from unintended bias. So the mean of G3 over the whole dataset will be used in the modeling phase.\
+
+## Categorical EDA
+A subset from the original dataset was made just containing categorical variables.\
+
+### Convert all Categorical Variables to Factors
+
+```{r}
+Prediction_Scores_new <- Prediction_Scores_new %>% 
+  mutate(across(where(is.character), as.factor))  
+
+```
+Categorical variables that were stored as characters were converted to factors so R could correctly interpret them as categorical data.\
+
+
+### Make subset of all Categorical Variables
+
+```{r}
+prediction_scores.c <- Prediction_Scores_new %>% 
+  select(where(is.factor), G3)
+head(prediction_scores.c)
+```
+A subset containing only categorical variables was created from the original dataset to perform categorical specific EDA. The Dependent variable was also included in this subset so the relationship between categorical variables and the dependent variable could be explored.\
+
+
+### Bar Plot of Categorical Variables 
+
+```{r}
+prediction_scores.c %>% plot_bar()
+```
+Majority of the categorical variables have good class balance and sufficient observations in each level for proper modeling, however there are some variables that struggle with class imbalance. These variables are explored using proportion tables.\
+
+
+### Exploring Proportions and Imbalance in Categorical Variables
+
+```{r}
+## Pstatus
+cat("\n Proportion of Parents Togther and Away")
+prop.table(table(prediction_scores.c$Pstatus)) # 12/88 percent split
+
+## Mjob
+cat("\n Proportion of the different jobs  Mothers Have")
+prop.table(table(prediction_scores.c$Mjob))
+
+## Fjob
+cat("\n Proportion of the different jobs  Fathers Have")
+prop.table(table(prediction_scores.c$Fjob))
+
+## Travel time
+cat("\n Proportion of Students who Have Failed")
+prop.table(table(prediction_scores.c$failures))
+
+## Failures
+cat("\n Proportion of students Travel Times")
+prop.table(table(prediction_scores.c$traveltime))
+
+## Scholsup
+cat("\n Proportion of Those Recieving Extra Educational Support")
+prop.table(table(prediction_scores.c$schoolsup))
+
+## Paid
+cat("\n Proportion of Students who Have Paid for Classes")
+prop.table(table(prediction_scores.c$schoolsup))
+
+## Higher
+cat("\n Proportion of Those Desiring Higher Education")
+prop.table(table(prediction_scores.c$higher))
+
+
+```
+The Variables that struggle from class imbalance are Parent Status, Mother Jobs, Father Jobs, Failures, Student Travel Time, Extra educational support, Shoolup, and higher education. All these variables have a level that represents less than 15% of the overall variable. This class imbalance is recognized and will be noted as a potential limitation to the models.\
+
+
+#### Simple Random Forest to see Categorical importance on the Depvar 
+
+```{r}
+set.seed(1)
+rf <- randomForest(G3 ~ ., data = prediction_scores.c, importance = TRUE)
+
+```
+A simple random forest model is made to explore categorical variable importance to the dependent variable G3. This can be used to help identify what categorical variables will most likely be important in modeling.\ 
+
+##### Display Important Variables
+
+```{r}
+importance_df <- as.data.frame(importance(rf)) %>% 
+  tibble::rownames_to_column("Variable") %>% 
+  arrange(desc(`%IncMSE`))
+print(importance_df)
+
+
+
+```
+When looking at the output from the random forest we look at "%IncMSE" to identify important variables. The %IncMSE metric reflects the percentage increase in prediction error when a variable's values are randomly imputed. A higher %IncMSE indicates that the model relies more heavily on that variable, meaning it has a stronger influence over G3. In this case failures and higher education have the greatest impact on G3 whereas paid and romantic have the lowest affect on G3.\
+
+## Data Understanding Summary
+The Data Understanding phase resulted in several important transformations that will greatly support the modeling process. During the numeric EDA, all scaled numeric variables were binned into grouped categories to improve level balance, and these variables were converted into factors, leaving only five true numeric variables in the dataset. The numeric analysis also revealed that G1 and G2 are strongly correlated with G3, indicating a potential risk of multicollinearity that will need to be monitored during modeling. In the categorical EDA, most variables showed reasonable class balance, with only a few exhibiting imbalance. Additionally, a Random Forest model was used to assess categorical variable importance relative to the dependent variable, providing early insight into which predictors may be most influential. Overall, the Data Understanding phase was highly valuable, as it improved variable balance and clarified which predictors are most closely related to the dependent variable.\
+
+
+
+# Data Preparation
+
+## Investigate Outliers
+
+```{r}
+abs_out <- boxplot.stats(prediction_scores.n$absences)$out
+abs_out
+hist(abs_out)
+
+G2_out <- boxplot.stats(prediction_scores.n$G2)$out
+G2_out
+hist(G2_out)
+
+G3_out <- boxplot.stats(prediction_scores.n$G3)$out
+G3_out
+hist(G3_out)
+
+```
+Histogram and boxplot visualizations were used to examine the outlier observations across all numeric variables. For Age, G1, G2, and G3, no outliers were removed because the values fell within a reasonable range and did not appear to be extreme in the context of the data. However, the four highest values of absences—32, 30, 26, and 24—were removed because they were substantially higher than the rest of the distribution and each occurred only once.\
+
+### Remove Appropriate Observations
+
+```{r}
+## Remove extreme absence values
+
+## Numeric Dataset
+
+prediction_scores.n <- prediction_scores.n %>% 
+  filter(!absences %in% c(32,30,26,24))
+
+## Main Dataset
+Prediction_Scores_new <- Prediction_Scores_new %>% 
+  filter(!absences %in% c(32,30,26,24))
+
+
+```
+
+### Skewness of Abscences
+```{r}
+e1071::skewness(prediction_scores.n$absences)
+
+```
+After removing the four most extreme values, the absences variable still exhibits right skewness, but the level of skewness (1.54) is acceptable and no longer extreme.
+
+### Q-Q Plot
+
+```{r}
+prediction_scores.n %>% plot_qq() ## Assume normality
+
+```
+Although none of these variables have perfect normality, all variables have a majority of observations that fall close or on the Q-Q plot black line. Normality can be assumed as nothing drastic is happening to the distribution.\
+
+## Look for Interaction Effects
+Interaction effects occur when the impact of one predictor variable on the dependent variable depends on the level of another predictor variable. This is important to investigate because models such as linear regression assume that predictors operate independently. If strong interaction effects exist and are not accounted for models will suffer and produce power accuracy.\
+
+### Lasso Model to look for Interaction Effects
+To explore interaction effects, a Lasso regression model was used. By specifying the model formula as (.)^2, R expands the dataset to include all main effects and all possible two-way interaction terms. Lasso is well-suited for this task because it applies regularization that shrinks unimportant coefficients to zero, allowing meaningful interaction effects to stand out through non-zero coefficients.\
+
+```{r}
+## Code Generated Via AI; ChatGPT
+
+X <- model.matrix(G3 ~ (.)^2, data = Prediction_Scores_new)[, -1]  # drop intercept
+y <- Prediction_Scores_new$G3
+
+# 2) Cross-validated LASSO
+set.seed(1)
+lasso_fit <- cv.glmnet(X, y, alpha = 1, family = "gaussian", standardize = TRUE)
+
+# 1) Extract non-zero coefficients
+nz <- as.matrix(coef(lasso_fit, s = "lambda.min"))
+sel <- tibble(term = rownames(nz), coef = as.numeric(nz[,1])) %>%
+  filter(coef != 0, term != "(Intercept)")
+
+# 2) Split into main effects vs interactions
+main_effects <- sel %>% filter(!str_detect(term, ":")) %>%
+  arrange(desc(abs(coef)))
+
+interactions <- sel %>% filter(str_detect(term, ":")) %>%
+  arrange(desc(abs(coef)))   # <- these are your "suspicious" interaction effects
+interactions
+
+## Strongest Interaction Effects Mjobteacher:schoolsupyes, Mjobother:reasonother, failuresNot Failed:G1, failuresNot Failed:G2
+
+```
+Based on the Lasso model results, several interaction terms were identified as potentially important because they retained non-zero coefficients. These include: Mjob:schoolsup, Mjob:Reason, G1:Failure, G2:Failure, and G1:G2. These interactions will be further examined by visualizing their relationships and evaluating model performance with and without these terms included.\
+
+
+#### Graph Interaction Effects
+
+##### Mother's Job and School Up
+
+
+```{r}
+## Simple Regression model to test if interaction effect improves adjusted R^2
+ms_anova  <- lm(G3 ~ Mjob * schoolsup, data = Prediction_Scores_new)
+msr_anova <- lm(G3 ~ Mjob + schoolsup, data = Prediction_Scores_new)
+
+# Extract adjusted R-squared values
+adj_ms_anova  <- summary(ms_anova)$adj.r.squared
+adj_msr_anova <- summary(msr_anova)$adj.r.squared
+
+
+anova_compare <- tibble(
+  Model = c("Mjob * schoolsup (Interaction Model)",
+            "Mjob + schoolsup (Additive Model)"),
+  Adjusted_R2 = c(adj_ms_anova, adj_msr_anova)
+)
+
+anova_compare
+
+
+```
+Including the interaction term in a regression model improves model fit, as evidenced by a higher adjusted R² compared to the model without the interaction. Therefore, this interaction effect will be included in the initial regression model.\
+
+
+##### Mother Job's and Reason
+
+```{r}
+
+mr_anova <- lm(G3 ~ Mjob * reason, data = Prediction_Scores_new)
+mrr_anova <- lm(G3~ Mjob + reason, data = Prediction_Scores_new)
+
+adj_mr_anova <- summary(mr_anova)$adj.r.squared
+adj_mrr_anova <- summary(mrr_anova)$adj.r.squared
+
+
+reason_interaction_compare <- tibble(
+  Model = c("Mjob * reason (Interaction Model)",
+            "Mjob + reason (Additive Model)"),
+  Adjusted_R2 = c(adj_mr_anova, adj_mrr_anova)
+)
+
+reason_interaction_compare
+
+
+```
+Including the interaction term in a regression model improves model fit, as evidenced by a higher adjusted R² compared to the model without the interaction. Therefore, this interaction effect will be included in the initial regression model.\
+
+
+##### G1 and Failure
+
+```{r}
+
+# Models
+int_g1 <- lm(G3 ~ G1 * failures, data = Prediction_Scores_new)
+reg_g1 <- lm(G3 ~ G1 + failures, data = Prediction_Scores_new)
+
+# Extract Adjusted R2
+adj_int_g1 <- summary(int_g1)$adj.r.squared
+adj_reg_g1 <- summary(reg_g1)$adj.r.squared
+
+
+g1_failures_compare <- tibble(
+  Model = c("G1 * failures (Interaction Model)",
+            "G1 + failures (Additive Model)"),
+  Adjusted_R2 = c(adj_int_g1, adj_reg_g1)
+)
+
+g1_failures_compare
+
+
+
+```
+Because the interaction reduces model performance, it will not be included in the final regression model.\
+
+
+##### G2 and Failure
+
+```{r}
+# Models
+int_g2 <- lm(G3 ~ G2 * failures, data = Prediction_Scores_new)
+reg_g2 <- lm(G3 ~ G2 + failures, data = Prediction_Scores_new)
+
+# Extract Adjusted R2
+adj_int_g2 <- summary(int_g2)$adj.r.squared
+adj_reg_g2 <- summary(reg_g2)$adj.r.squared
+
+g2_failures_compare <- tibble(
+  Model = c("G2 * failures (Interaction Model)",
+            "G2 + failures (Additive Model)"),
+  Adjusted_R2 = c(adj_int_g2, adj_reg_g2)
+)
+
+g2_failures_compare
+
+
+
+```
+Because the interaction reduces model performance, it will not be included in the final regression model.\
+
+##### G1 and G2
+
+```{r}
+# Models
+int_g1g2 <- lm(G3 ~ G1 * G2, data = Prediction_Scores_new)
+no_g1g2  <- lm(G3 ~ G1 + G2, data = Prediction_Scores_new)
+
+# Extract Adjusted R2
+adj_int_g1g2 <- summary(int_g1g2)$adj.r.squared
+adj_no_g1g2  <- summary(no_g1g2)$adj.r.squared
+
+# Create table
+library(tibble)
+
+g1g2_compare <- tibble(
+  Model = c("G1 * G2 (Interaction Model)",
+            "G1 + G2 (Additive Model)"),
+  Adjusted_R2 = c(adj_int_g1g2, adj_no_g1g2)
+)
+
+g1g2_compare
+
+
+
+
+
+
+```
+Including the interaction term in a regression model improves model fit, as evidenced by a higher adjusted R² compared to the model without the interaction. Due to this the interaction effect between G1 and G2 will be included in the initial regression model.\
+
+Interaction Effects that will be used in the initial regression model is, Mother's Job: School up, Mother's Job: Reason, and G1: G2.\
+
+## Correct Data Types
+
+```{r}
+prediction_tree <- Prediction_Scores_new %>% 
+  mutate(across(where(is.ordered), ~ factor(.x, ordered = FALSE)))
+
+```
+
+## Data Partition: Regression Tree
+
+This step ensures that all variables have the correct data types for regression tree modeling by converting any ordered factors into standard (unordered) factors and confirming that categorical variables are factors and numerical variables remain numeric.\
+
+```{r}
+set.seed(1)
+myindex_tree <- createDataPartition(prediction_tree$G3, p = 0.7, list = FALSE)
+train_tree <- prediction_tree[myindex_tree,]
+test_tree <- prediction_tree[-myindex_tree,]
+
+cat("Mean of G3 \n")
+mean(prediction_tree$G3)
+
+cat("\n Mean of train set G3 \n")
+mean(train_tree$G3)
+
+cat("\n Mean of test set G3 \n")
+mean(test_tree$G3) ## All similar Mean's 
+
+```
+The dataset was split into a 70% training set and a 30% testing set using random partitioning. To verify that the split did not introduce bias, the mean of G3 was compared across the full dataset, the training set, and the testing set. All three means are very similar, indicating that the partitioning preserved the overall distribution of G3 and that both subsets are representative of the original data.\
+
+## Data Preparation: Linear Regression
+
+```{r}
+set.seed(1)
+
+reg_index <- createDataPartition(prediction_tree$G3, p = 0.8, list=FALSE)
+reg_train <- prediction_tree[reg_index,]
+reg_test <- prediction_tree[-reg_index,]
+
+View(prediction_tree)
+
+cat("Mean of G3 \n")
+mean(prediction_tree$G3)
+
+cat("\n Mean of train set G3 \n")
+mean(reg_train$G3)
+
+cat("\n Mean of test set G3 \n")
+mean(reg_test$G3) ## All similar Mean's 
+
+
+
+```
+The dataset was split into an 80% training set and a 20% testing set using random partitioning based on the G3 variable. To confirm that this split did not introduce sampling bias, the mean of G3 was calculated for the full dataset, the training subset, and the testing subset. All three means are nearly identical, indicating that the train–test split preserved the overall distribution of G3. This suggests that both the training and testing sets are representative of the original data, making the partitioning appropriate for linear regression modeling.\
+
+## Data Partition: Random Forest
+
+```{r}
+p <- ncol(train_tree)-1
+
+mtry_center <- max(1, round(p/3))
+mtry_grid <- data.frame(mtry = sort(unique(pmax(1, c(mtry_center-1, mtry_center, mtry_center+1, 2, p)))))
+
+```
+Comments on Data Partitioning for the Random Forest:\
+The data partitioning step calculates the total number of predictor variables and uses that to determine a center value, the number of variables randomly sampled at each split. A small grid of values is then created around the center value(including one below, the center, one above, and boundary values), allowing the Random Forest model to test multiple candidates during tuning.\
+
+# Model - Regression Tree
+
+## Default Tree
+
+```{r}
+set.seed(1)
+def_tree <- rpart(G3~., data = train_tree, method = "anova")
+rpart.plot(def_tree, type = 2, extra = 101, under = TRUE, fallen.leaves = TRUE) ## G2 variable overwhelms the tree
+
+```
+A default tree was made to see what variables are most important to predicting the values of G3, these variables being G2 and absences. G2 drives most of the splits in the default tree.\
+
+
+
+## Full Tree
+
+```{r}
+set.seed(1)
+
+full_tree <- rpart(G3~., data = train_tree, control = rpart.control(cp = 0, minsplit = 2, minbucket = 1, maxdepth = 30, xval = 10))
+head(full_tree$cptable)
+
+min_error <- full_tree$cptable[which.min(full_tree$cptable[,"xerror"]),]
+min_error
+
+```
+A full tree was made to produce a cptable to find the minimum error tree marked by the lowest "xerror", the row with the minimum xerror value will be used to calculate the threshold value which will be used to prune the full tree.\
+
+## Threshold
+
+```{r}
+cpt <- full_tree$cptable
+rmin <- which.min(cpt[,"xerror"])
+min_xer <- cpt[rmin, "xerror"]
+min_xstd <- cpt[rmin, "xstd"]
+threshold <- min_xer + min_xstd
+threshold ## 0.2832231 xerror value
+
+within_threshold <- which(cpt[,"xerror"] <= threshold)
+
+best_pruned_index <- within_threshold[which.min(cpt[within_threshold, "nsplit"])]
+
+best_pruned_cp <- cpt[best_pruned_index, "CP"]
+best_pruned_xerror <- cpt[best_pruned_index, "xerror"]
+best_pruned_nsplits <- cpt[best_pruned_index, "nsplit"]
+
+cat("Best-Pruned Tree (1-SE Rule)\n")
+cat("CP value:", best_pruned_cp, "\n")
+cat("Cross-validation error:", best_pruned_xerror, "\n")
+cat("Number of splits:", best_pruned_nsplits, "\n")
+
+
+```
+The threshold value is determined by taking the minimum xerror and adding its corresponding xstd, creating an acceptable error range around the best-performing tree. Any tree whose xerror falls within this range is considered statistically indistinguishable from the optimal tree. This approach helps identify a set of candidate trees—ranging from simpler to more complex—that all perform comparably well. Based on this threshold, the most complex tree that still remains within the statistically acceptable range is the tree with ten splits.\
+
+
+
+## Pruned Tree
+
+```{r}
+set.seed(1)
+pruned_tree <- prune(full_tree, cp = 0.02174471)
+rpart.plot(pruned_tree, type = 2, extra = 101, under = TRUE, fallen.leaves = TRUE)
+
+
+```
+Comments on Pruned Tree:\
+G2 accounts for all splits within the pruned tree. Due to this other predictors are not seen in how they may impact G3.\
+
+## Best Tree
+
+### Create Best Tree
+
+```{r}
+tree_ctrl <- trainControl(method = "cv", number = 10)
+
+set.seed(1)
+b_tree <- train(
+  G3~.,
+  data = train_tree,
+  method = "rpart",
+  trControl = tree_ctrl,
+  tuneLength = 25,
+  metric = "RMSE",
+  control = rpart::rpart.control(minsplit = 2, minbucket = 1, cp = 0)
+)
+
+
+
+b_tree$resample %>% 
+  arrange(RMSE)
+
+```
+
+
+### Variable Importance
+
+```{r}
+
+print(caret::varImp(b_tree))
+
+```
+Comments on Variable Importance:\
+Variable Importance shows which variables have the most effect on G3. From this table it shows that G2, G1, Absences, and failures have the highest variable importance when relating to G3. G2 and G1 however are by far the strongest predictors within the Best Tree.\
+
+
+### Print Tree
+
+```{r}
+prp(b_tree$finalModel, type = 2, extra = 101, under = TRUE, digits = 3, fallen.leaves = TRUE)
+
+
+```
+G2 takes up all the splits for the best tree, although this is helpful to know that G2 has the highest impact on G3 a more complex tree will be made to try and see how other predictors relate to G3.\
+
+
+
+### Create More Complex Tree To See Further Splits
+
+```{r}
+comp_tree <- train(
+  G3 ~., data = train_tree, method = "rpart", trControl = tree_ctrl, tuneGrid = data.frame(cp = 0.00492273783), metric = "RMSE", control = rpart::rpart.control(minsplit = 2, minbucket = 1, cp = 0)
+)
+
+
+```
+To make the most complex tree within statistical significance of the best tree, we will take the lowest cp value within the threshold range, the lowest cp value will render the most splits in the tree and give more opportunity for other predictors to be seen.\
+
+
+#### Print Complex Tree
+
+```{r}
+
+prp(comp_tree$finalModel, type = 2, extra = 101, under = TRUE, digits = 3, fallen.leaves = TRUE) ## The more complex tree brings in more variables then just G2, surprised G1 doesnt make an appearance.
+
+```
+
+#### Variable Importance Complex Tree
+
+```{r}
+print(caret::varImp(comp_tree))
+
+
+```
+
+Due to the increase in splits G2 is not the only predictor variable contributing to G3 in this tree. Although G2 still creates the most splits, Absences, School MS, sex, and Mother's that are teachers are predictors that now contribute to G3. It is surprising that the second most important variable,G1, does not contribute to a split within in the tree.\
+
+
+## Evaluation: Regression Tree
+
+```{r}
+predict_bt <- predict(b_tree, test_tree)
+validation_bt <- round(forecast::accuracy(predict_bt, test_tree$G3), 2)
+rownames(validation_bt) <- "Best Tree"
+print(validation_bt)
+
+predict_ct <- predict(comp_tree, test_tree)
+validation_ct <- round(forecast::accuracy(predict_ct, test_tree$G3), 2)
+rownames(validation_ct) <- "Complex Tree"
+print(validation_ct) ## MPE and MAPE zero due to zero values in column G3
+
+
+
+
+```
+This evaluation compares the best tree to the complex tree. The complex tree has lower RMSE and MAE which means the complex tree predicts the values of G3 with slightly less average error than the best tree. MPE and MAPE appear as Inf/–Inf because G3 contains zero values, making percentage-based error measures undefined. Due to the complex tree having lower RMSE and MAE values this will be the chosen regression tree that will be compared to other regression models.\
+
+
+
+# Model: Random Forest
+
+```{r}
+set.seed(1)
+
+rf <- train(
+  G3 ~., 
+  data = train_tree,
+  method ="rf",
+  trControl = tree_ctrl,
+  tuneGrid = mtry_grid,
+  ntree = 1000,
+  importance = TRUE
+)
+rf
+
+```
+A Random Forest model was trained using 10-fold cross-validation to predict the final grade (G3). The model evaluated multiple mtry values—the number of predictors randomly sampled at each split—to identify the configuration that produced the lowest prediction error. Based on RMSE, the optimal model used mtry = 32, indicating this setting achieved the best balance of predictive accuracy and model stability. The model was trained using 1,000 trees, and variable importance was recorded for interpretation in later steps.\
+
+
+## Variable Importance
+
+```{r}
+caret::varImp(rf)
+```
+Identical to the Best tree, the most important variables for the random forest model are G2, G1, absences, and failures, with G2 and G1 being the most important variables relating to G3.\
+
+
+# Evaluation Metrics: Random Forest
+```{r}
+predicted_rf <- predict(rf, test_tree)
+test_rf <- round(forecast::accuracy(predicted_rf, test_tree$G3), 2)
+rownames(test_rf) <- "Random Forest"
+test_rf ## Better than Regression Tree, again MPE and MAPE, InF, Due to 0 values in G3 column =
+
+```
+The random forest has an RMSE value of 1.26 and MAE value of 0.78. The random forest will be compared to the best performing regression tree and linear regression model in the evaluation phase.\
+
+
+# Model: Linear Regression- Assume a 10% Level of Significance
+
+## Cross Validation Control
+
+```{r}
+reg_ctrl <- trainControl(method = "cv", number = 10)
+
+```
+
+## Regression Model: All variables
+
+```{r}
+set.seed(1)
+int_reg <- train(
+  G3~. +  Mjob:schoolsup + Mjob:reason + G1:G2,
+  data = reg_train,
+  method = "lm",
+  trControl = reg_ctrl
+)
+summary(int_reg) ## Model is slightly better, and I mean slightly better, with interaction effects
+
+```
+Based off the initial regression model I will only keep the varialbes G1:G2, G1, G2, Mjobteacher:schoolsupyes, failures, and travel time. All other variables will be dropped due to their low significance in the model. Another regression model will be made with the variables that were seen significant in this model.\
+
+## Regression Model: Only Significant Variables
+
+```{r}
+set.seed(1)
+ref_lm <- train(
+  G3 ~ G1*G2 + G1 + G2 + Mjob * schoolsup + failures + traveltime, data = reg_train, method = "lm", trControl = reg_ctrl
+)
+summary(ref_lm)
+
+```
+
+
+### Compare Default Model and Refined Model
+
+```{r}
+default_reg <- int_reg$finalModel
+refined_reg <- ref_lm$finalModel
+
+adjr2_default <- summary(default_reg)$adj.r.squared
+adjr2_refined <- summary(refined_reg)$adj.r.squared
+
+cbind(adjr2_default, adjr2_refined) ## Refined Model with dropped variables and interaction effect has a higher adjr2. 
+
+
+```
+The Refined regression model while having significantly less variables only had a slight drop in adjusted R squared.\
+
+
+## Evaluation Metrics: Linear Regression
+
+```{r}
+pred_reflm <- predict(ref_lm, newdata = reg_test)
+
+# RMSE Metric
+RMSE_reflm <- rmse(reg_test$G3, pred_reflm)
+
+# MAE 
+MAE_reflm <- mae(reg_test$G3, pred_reflm)
+
+# MAD
+MAD_reflm <- mad(reg_test$G3, pred_reflm)
+
+# MAPE
+MAPE_reflm <- mape(reg_test$G3, pred_reflm)
+
+metrics_table <- data.frame(
+  Model = "Refined Model",
+  RMSE = RMSE_reflm,
+  MAE = MAE_reflm,
+  MAD = MAD_reflm,
+  MAPE = MAPE_reflm
+)
+metrics_table
+
+```
+The Linear Regression Model has an RMSE value of 0.91 and MAE value of 0.697. The refiend linear regression model will be compared to the best performing regression tree and random forest model in the evaluation phase. 
+
+
+## Predict G3 Numbers
+
+```{r}
+testset <- cbind(
+  reg_test, pred_reflm
+)
+```
+
+### Predicted vs Actual G3 Values
+
+```{r}
+# Code Made Via AI; ChatGPT
+
+## Data frame for Plotting
+results <- data.frame(
+  Actual = reg_test$G3,
+  Predicted = pred_reflm
+)
+
+## Make Plot
+plot(results$Actual, results$Predicted,
+     main = "Predicted vs Actual G3 (Test Set)",
+     xlab = "Actual G3",
+     ylab = "Predicted G3",
+     pch = 19, col = "steelblue")
+abline(0, 1, col = "red", lwd = 2) ## Supports RMSE value
+
+
+
+```
+The Predicted vs. Actual G3 plot shows that the regression model performs reasonably well on the test set. Most of the points fall close to the 45-degree reference line, indicating that the predicted G3 values closely match the actual scores. Although some deviation exists—particularly at lower and mid-range G3 values—the overall pattern suggests that the model captures the general trend of student performance. The alignment along the diagonal line reflects good predictive accuracy and indicates that the model generalizes well to new, unseen data.\
+
+
+# Evaluation
+
+## Compare best Prediction Models
+
+```{r}
+## --- Linear Regression (refined model) ---
+pred_reflm <- predict(ref_lm, newdata = reg_test)
+
+ME_reflm   <- mean(pred_reflm - reg_test$G3)
+RMSE_reflm <- rmse(reg_test$G3, pred_reflm)
+MAE_reflm  <- mae(reg_test$G3, pred_reflm)
+
+## --- Random Forest ---
+predicted_rf <- predict(rf, test_tree)
+acc_rf <- forecast::accuracy(predicted_rf, test_tree$G3)  # don't round yet
+
+## --- Complex Tree ---
+predict_ct <- predict(comp_tree, test_tree)
+acc_ct <- forecast::accuracy(predict_ct, test_tree$G3)    # don't round yet
+
+
+## --- Build comparison table (ME, RMSE, MAE only) ---
+library(dplyr)
+
+metrics_compare <- bind_rows(
+  data.frame(
+    Model = "Refined Linear Regression",
+    ME    = ME_reflm,
+    RMSE  = RMSE_reflm,
+    MAE   = MAE_reflm
+  ),
+  data.frame(
+    Model = "Random Forest",
+    ME    = acc_rf[1, "ME"],
+    RMSE  = acc_rf[1, "RMSE"],
+    MAE   = acc_rf[1, "MAE"]
+  ),
+  data.frame(
+    Model = "Complex Tree",
+    ME    = acc_ct[1, "ME"],
+    RMSE  = acc_ct[1, "RMSE"],
+    MAE   = acc_ct[1, "MAE"]
+  )
+) %>%
+  mutate(across(where(is.numeric), ~round(.x, 2)))
+
+knitr::kable(metrics_compare,
+             caption = "Model Performance Comparison (ME, RMSE, MAE)")
+
+
+
+
+
+
+```
+
+The table compares the three best models- refined liner regression model, the random forest, and the complex tree -from the modeling phase. These models are compared using ME (Mean Error), RMSE (Root Mean Squared Error), and MAE (Mean Absolute Error). Across all three of these evaluation metrics, the refined linear regression model performs the best in each one. The refined linear regression model having the smallest RMSE means it has the smallest average prediction error magnitude, making it the most accurate overall. The refined linear regression model having the Lowest MAE means the model’s typical error in predicting a student's final grade is less than one point. And the ME value being close to zero shows that the model does not systematically overpredict or underpredict, meaning bias is minimal. Overall, the refined linear regression is the best out of the prediction models and will be the model used to answer the business problem and research questions.\
+
+
+
+
+# Deployment
+
+## Answer to the Business Problem 
+The business problem guiding this analysis was to determine the final grades of students based off different variables. Based on the modeling and evaluation process, the refined linear regression model should be used as the tool to answer this business question. The refined linear regression model showed small average prediction error, with each prediction being within less than one point of the students grade. This model also showed minimal bias making it a perfect tool for school's to use.\
+
+## Two Research Questions 
+
+1. Which factors influenced G3 the most?\
+
+The refined linear regression model identified several strong predictors of a student’s final grade (G3). The most influential factors were G1 and G2, the student’s earlier grading periods, which showed the strongest positive relationship with the final score. Additionally, an interaction effect: students whose mothers work as teachers and who also receive extra educational support tend to exhibit different performance patterns, indicating that the combination of home academic guidance and supplemental school support tend to lead to higher G3 values.\
+
+
+2. Does parental education level influence students’ academic performance, as reflected in their G3 scores?\
+
+Based on the refined linear regression model, neither the mother’s nor the father’s level of education had a statistically significant effect on the student’s final grade (G3). This suggests that, within this dataset, parental education does not meaningfully influence final academic performance.\
+
+## Business Recommendations
+
+If schools were to implement the refined linear regression model, three key recommendations emerge. First, prioritize early grade monitoring. Since G1 and G2 were the strongest predictors of G3, schools should focus on identifying students with low early-term performance and intervening before final grades are determined. Second, expand and strengthen educational assistance programs. The analysis showed that students receiving extra academic support tend to achieve higher final grades, demonstrating the value of structured tutoring, supplemental instruction, and targeted academic resources. Finally, schools should develop support plans that help replicate aspects of a strong home academic environment. Students whose mothers worked as teachers tended to perform better, suggesting that guided academic support and structured study environments matter. Schools can help by offering supervised study halls and mentorship programs for students whose parents may be unable to provide academic assistance at home.\
+
+
+# References
+
+## Citation of orignial data source with authors
+
+Cortez, P., & Silva, A. (2014). Student Performance [Data set]. UCI Machine Learning Repository. https://archive.ics.uci.edu/dataset/320/student+performance. \
+
+## Citation of ChatGPT
+OpenAI. (2025). ChatGPT (Version 5.1) [Large language model]. https://chat.openai.com/ \
+
+## R-Version citation
+
+```{r}
+one <- print(citation(), style = "textVersion")
+cite.version <- R.Version()
+pip <- as.character(cite.version$version.string)
+cat("Version", pip, "\n")
+cat("  \n")
+```
+
+## Citation for all R packages
+
+```{r}
+print(citation("readxl"), style="textVersion")
+print(citation("tidyverse"), style="textVersion")
+print(citation("dplyr"), style="textVersion")
+print(citation("ggplot2"), style="textVersion")
+print(citation("DataExplorer"), style="textVersion")
+print(citation("dlookr"), style="textVersion")
+print(citation("psych"), style="textVersion")
+print(citation("tidyr"), style="textVersion")
+print(citation("e1071"), style="textVersion")
+print(citation("randomForest"), style="textVersion")
+print(citation("glmnet"), style="textVersion")
+print(citation("stringr"), style="textVersion")
+print(citation("caret"), style="textVersion")
+print(citation("rpart"), style="textVersion")
+print(citation("rpart.plot"), style="textVersion")
+print(citation("pdp"), style="textVersion")
+print(citation("car"), style="textVersion")
+print(citation("Metrics"), style="textVersion")
+print(citation("auditor"), style="textVersion")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
