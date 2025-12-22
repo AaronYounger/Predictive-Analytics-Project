@@ -13,7 +13,13 @@
 For readers interested in exploring this report in greater depth, please refer to the corresponding Quarto (.qmd) or PDF file for this report. 
 
 [📄 View Prediction PDF](Prediction-Report/Prediction_Report.pdf).
-[💻 View Prediction Code (.qmd)](Prediction-Report/Prediction_Project_Code)
+[💻 View Prediction Code (.qmd)](Prediction-Report/Prediction_Project_Code).
+
+## Forecast Report
+
+For readers interested in exploring this report in greater depth, please refer to the corresponding Quarto (.qmd) or PDF file for this report. 
+[📄 View Forecast PDF](Forecast-Report/Forecast_Report.pdf).
+[💻 View Forecast Code (.qmd)](Forecast-Report/Forecasting_Report_Code)
 
 
 
